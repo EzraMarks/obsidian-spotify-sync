@@ -1,5 +1,5 @@
 import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginManifest, PluginSettingTab, Setting, requestUrl } from 'obsidian';
-import { SharedStuff, ObsidianSpotifySettings } from './main';
+import ObsidianSpotify, { ObsidianSpotifySettings } from './main';
 
 /**
  * Class responsible for refreshing the Spotify token and managing event listeners.
@@ -14,46 +14,44 @@ export class RefreshClass {
 	 * @param args.manifest - The plugin manifest.
 	 */
 	static async refreshInit(args: {
-		sharedstuff: SharedStuff;
+		plugin: ObsidianSpotify;
 		refreshspot: Function;
 		settings: ObsidianSpotifySettings;
 		manifest: PluginManifest;
 	}) {
-		const sharedstuff = args.sharedstuff;
-		const refreshspot = args.refreshspot;
-		const settings = args.settings;
-		const manifest = args.manifest;
+		const {plugin, refreshspot, settings, manifest} = args;
+
 		var TIMEOUT = 3000;
 
-		sharedstuff.set("offlinerefresh", async () => {
+		plugin.offlinerefresh = async () => {
 			console.log("[" + manifest.name + "] Now offline, refreshing Spotify Token after online and resetting timer");
-			sharedstuff.get("refreshname")(settings)
-		});
+			plugin.refreshname(settings)
+		};
 
-		window.addEventListener("offline", sharedstuff.get("offlinerefresh"));
-		window.addEventListener("offline-custom", sharedstuff.get("offlinerefresh"));
+		window.addEventListener("offline", plugin.offlinerefresh);
+		window.addEventListener("offline-custom", plugin.offlinerefresh);
 
-		sharedstuff.set("onlinerefresh", async () => {
+		plugin.onlinerefresh = async () => {
 			console.log("[" + manifest.name + "] Refreshing Spotify Token after online and resetting timer");
 			await refreshspot(settings, manifest);
-			sharedstuff.get("refreshname")(settings)
-			clearInterval(sharedstuff.get("spotifyrefreshtimer"));
+			plugin.refreshname(settings);
+			clearInterval(plugin.spotifyrefreshtimer);
 			setTimeout(async () => {
 				let spotifyrefreshtimer = setInterval(async () => {
 					await refreshspot(settings, manifest);
 				}, 3600000);
-				sharedstuff.set("spotifyrefreshtimer", spotifyrefreshtimer);
+				plugin.spotifyrefreshtimer =  spotifyrefreshtimer;
 			}, TIMEOUT);
-		});
+		};
 
-		window.addEventListener("online", sharedstuff.get("onlinerefresh"));
-		window.addEventListener("online-custom", sharedstuff.get("onlinerefresh"));
+		window.addEventListener("online", plugin.onlinerefresh);
+		window.addEventListener("online-custom", plugin.onlinerefresh);
 
 		
 		let spotifyrefreshtimer = setInterval(async () => {
 			await refreshspot(settings, manifest);
 		}, 3600000);
-		sharedstuff.set("spotifyrefreshtimer", spotifyrefreshtimer);
+		plugin.spotifyrefreshtimer = spotifyrefreshtimer;
 		await refreshspot(settings, manifest);
 	}
 
@@ -65,19 +63,18 @@ export class RefreshClass {
 	 * @param args.manifest - The plugin manifest.
 	 */
 	static async logoutOrunload(args: {
-		sharedstuff: SharedStuff;
+		plugin: ObsidianSpotify;
 		settings: ObsidianSpotifySettings;
 		manifest: PluginManifest;
 	}) {
-		const sharedstuff = args.sharedstuff;
-		const settings = args.settings;
-		const manifest = args.manifest;
+		const {plugin, settings, manifest} = args;
+
 		(window.spotifysdk as any) = null;
-		clearInterval(sharedstuff.get("spotifyrefreshtimer"));
-		window.removeEventListener("offline", sharedstuff.get("offlinerefresh"));
-		window.removeEventListener("offline-custom", sharedstuff.get("offlinerefresh"));
-		window.removeEventListener("online", sharedstuff.get("onlinerefresh"));
-		window.removeEventListener("online-custom", sharedstuff.get("onlinerefresh"));
+		clearInterval(plugin.spotifyrefreshtimer);
+		window.removeEventListener("offline", plugin.offlinerefresh);
+		window.removeEventListener("offline-custom", plugin.offlinerefresh);
+		window.removeEventListener("online", plugin.onlinerefresh);
+		window.removeEventListener("online-custom", plugin.onlinerefresh);
 		console.log("[" + manifest.name + "] Both the Spotify SDK and auto token refresher have been cleaned up");
 	}
 }

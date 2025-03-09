@@ -1,11 +1,10 @@
 {
-	"id": "spotify-api",
-	"name": "Spotify API",
+	"id": "spotify-sync",
+	"name": "Spotify Sync",
 	"minAppVersion": "0.15.0",
-	"description": "Exposes Spotify API",
-	"author": "Darren-project",
-	"authorUrl": "https://github.com/Darren-project",
-	"fundingUrl": "https://www.buymeacoffee.com/mickeydarrenlau",
+	"description": "Spotify sync plugin.",
+	"author": "Ezra Marks",
+	"authorUrl": "https://github.com/EzraMarks",
 	"isDesktopOnly": false,
-	"version": "1.6.5"
+	"version": "1.0"
 }
