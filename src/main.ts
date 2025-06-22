@@ -1,14 +1,16 @@
 import { Platform, App, Editor, MarkdownView, Modal, Notice, Plugin, PluginManifest, PluginSettingTab, Setting, requestUrl, SettingTab } from 'obsidian';
 import { SpotifyApi, AccessToken } from '@spotify/web-api-ts-sdk';
-import { RefreshClass } from './RefreshClass';
+import { RefreshClass } from './refreshClass';
+import { SpotifySyncEngine } from './spotifySyncEngine';
+
 
 /**
  * Declares the global interface for the `window` object.
  */
 declare global {
-    interface Window {
-        spotifysdk:SpotifyApi;
-    }
+	interface Window {
+		spotifysdk: SpotifyApi;
+	}
 }
 
 /**
@@ -64,12 +66,12 @@ export default class ObsidianSpotify extends Plugin {
 	usernametext: HTMLSpanElement;
 	offlinerefresh: () => Promise<void>;
 	onlinerefresh: () => Promise<void>;
-	
+
 	/**
 	 * Called when the plugin is loaded.
 	 */
 	async onload() {
-        if(Platform.isMobileApp) {
+		if (Platform.isMobileApp) {
 			this.fakenetevents = async () => {
 				const checkConnection = async () => {
 					try {
@@ -95,9 +97,9 @@ export default class ObsidianSpotify extends Plugin {
 					window.dispatchEvent(event);
 				}
 			};
-		  this.fakeneteventstimer = setInterval(this.fakenetevents, 2000);
+			this.fakeneteventstimer = setInterval(this.fakenetevents, 2000);
 		}
-		
+
 		// This adds a settings tab so the user can configure various aspects of the plugin
 		this.addSettingTab(new ObsidianSpotifySettingsTab(this.app, this));
 		await this.loadSettings();
@@ -116,24 +118,24 @@ export default class ObsidianSpotify extends Plugin {
 				client_id: setting.spotify_client_id
 			}).toString();
 			try {
-			let access_token = await requestUrl({
-				"url": 'https://accounts.spotify.com/api/token',
-				"method": "POST",
-				"headers": {
-					'content-type': 'application/x-www-form-urlencoded',
-					'Authorization': 'Basic ' + (btoa(setting.spotify_client_id + ':' + setting.spotify_client_secret))
-				},
-				"body": body,
-				"throw": false
-			});
-			let data = await access_token.json;
+				let access_token = await requestUrl({
+					"url": 'https://accounts.spotify.com/api/token',
+					"method": "POST",
+					"headers": {
+						'content-type': 'application/x-www-form-urlencoded',
+						'Authorization': 'Basic ' + (btoa(setting.spotify_client_id + ':' + setting.spotify_client_secret))
+					},
+					"body": body,
+					"throw": false
+				});
+				let data = await access_token.json;
 
-			console.log("[" + manifest.name + "] Spotify Token Refreshed");
-			window.spotifysdk = SpotifyApi.withAccessToken(setting.spotify_client_id, data);
-			window.spotifysdk['authenticationStrategy'].refreshTokenAction = async () => { return; };
-					} catch {
+				console.log("[" + manifest.name + "] Spotify Token Refreshed");
+				window.spotifysdk = SpotifyApi.withAccessToken(setting.spotify_client_id, data);
+				window.spotifysdk['authenticationStrategy'].refreshTokenAction = async () => { return; };
+			} catch {
 				console.log("[" + manifest.name + "] Waiting for internet to update token")
-				
+
 			}
 		}
 
@@ -181,21 +183,21 @@ export default class ObsidianSpotify extends Plugin {
 		 */
 		async function spotify_auth_logout(manifest: PluginManifest, this2: ObsidianSpotify) {
 			try {
-			window.spotifysdk.logOut();
-			console.log(this2);
-			this2.settings.spotify_access_token = {
-				access_token: "",
-				token_type: "",
-				expires_in: 0,
-				refresh_token: ""
-			};
-			await this2.saveSettings();
-			RefreshClass.logoutOrunload({ plugin: this, settings: this2.settings, manifest: manifest });
-			console.log("[" + manifest.name + "] Logged out");
-			try {
-				this.refreshname(this2);
-			} catch {}
-		} catch {}
+				window.spotifysdk.logOut();
+				console.log(this2);
+				this2.settings.spotify_access_token = {
+					access_token: "",
+					token_type: "",
+					expires_in: 0,
+					refresh_token: ""
+				};
+				await this2.saveSettings();
+				RefreshClass.logoutOrunload({ plugin: this, settings: this2.settings, manifest: manifest });
+				console.log("[" + manifest.name + "] Logged out");
+				try {
+					this.refreshname(this2);
+				} catch { }
+			} catch { }
 		}
 
 		this.spotify_auth_login_function = spotify_auth_login;
@@ -227,14 +229,14 @@ export default class ObsidianSpotify extends Plugin {
 
 		async function refreshname(settings: ObsidianSpotifySettings) {
 			try {
-				if(settings.spotify_access_token.access_token) {
-					
-						let data = await window.spotifysdk.currentUser.profile()
-						this.usernametext.setText(data.display_name + " (" + data.id + ")")
-								} else {
+				if (settings.spotify_access_token.access_token) {
+
+					let data = await window.spotifysdk.currentUser.profile()
+					this.usernametext.setText(data.display_name + " (" + data.id + ")")
+				} else {
 					this.usernametext.setText("Not logged in")
 				}
-			} catch(e) {
+			} catch (e) {
 				this.usernametext.setText("Error getting username")
 			}
 		}
@@ -275,12 +277,23 @@ export default class ObsidianSpotify extends Plugin {
 			RefreshClass.refreshInit({ plugin: this, refreshspot, settings: this.settings, manifest: this.manifest });
 			try {
 				this.refreshname(this.settings)
-			} catch {}
+			} catch { }
 		});
 	}
 
 	async sync() {
-		
+		if (!window.spotifysdk) {
+			new Notice('Please login to Spotify first');
+			return;
+		}
+
+		try {
+			const syncManager = new SpotifySyncEngine(this.app, window.spotifysdk);
+			await syncManager.syncAll();
+		} catch (error) {
+			console.error('Sync failed:', error);
+			new Notice('Sync failed. Check console for details.');
+		}
 	}
 
 	/**
@@ -288,7 +301,7 @@ export default class ObsidianSpotify extends Plugin {
 	 */
 	onunload() {
 		RefreshClass.logoutOrunload({ plugin: this, settings: this.settings, manifest: this.manifest });
-		if(this.fakeneteventstimer) {
+		if (this.fakeneteventstimer) {
 			clearInterval(this.fakeneteventstimer);
 		}
 	}
@@ -316,11 +329,11 @@ class ObsidianSpotifySettingsTab extends PluginSettingTab {
 
 	constructor(app: App, plugin: ObsidianSpotify) {
 		super(app, plugin);
-		this.plugin = plugin;	
+		this.plugin = plugin;
 	}
 
 	display(): void {
-		const {containerEl} = this;
+		const { containerEl } = this;
 		let manifest = this.plugin.manifest;
 
 		containerEl.empty();
@@ -335,43 +348,43 @@ class ObsidianSpotifySettingsTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}));
 
-				new Setting(containerEl)
-				.setName('Spotify Client secret')
-				.setDesc('Find it in your spotify developer dashboard')
-				.addText(text => text
-					.setPlaceholder('Enter your client secret')
-					.setValue(this.plugin.settings.spotify_client_secret)
-					.onChange(async (value) => {
-						this.plugin.settings.spotify_client_secret = value;
-						await this.plugin.saveSettings();
-					}));
-				new Setting(containerEl)
-				.setName('Spotify Authentification')
-				.setDesc('Login or logout from spotify')
-				.addButton((btn) => btn
+		new Setting(containerEl)
+			.setName('Spotify Client secret')
+			.setDesc('Find it in your spotify developer dashboard')
+			.addText(text => text
+				.setPlaceholder('Enter your client secret')
+				.setValue(this.plugin.settings.spotify_client_secret)
+				.onChange(async (value) => {
+					this.plugin.settings.spotify_client_secret = value;
+					await this.plugin.saveSettings();
+				}));
+		new Setting(containerEl)
+			.setName('Spotify Authentification')
+			.setDesc('Login or logout from spotify')
+			.addButton((btn) => btn
 				.setButtonText("Login")
 				.setCta()
 				.onClick(async () => {
 					this.plugin.spotify_auth_login_function(this.plugin.settings.spotify_client_id, manifest);
 
 				}))
-				.addButton((btn) => btn
+			.addButton((btn) => btn
 				.setButtonText("Logout")
-				.setCta()	
+				.setCta()
 				.onClick(async () => {
-					
+
 					this.plugin.spotify_auth_logout_function(manifest, this.plugin);
 
 				}))
 
-				const usernamecontainer = new Setting(containerEl)
-				.setName('Logged in as')
-				.setDesc('The current logged in user')
+		const usernamecontainer = new Setting(containerEl)
+			.setName('Logged in as')
+			.setDesc('The current logged in user')
 
-				const usernamewrapcontainer = usernamecontainer.controlEl.createDiv("spotify-api-refresh-token");
-				const usernametext = usernamewrapcontainer.createSpan()
+		const usernamewrapcontainer = usernamecontainer.controlEl.createDiv("spotify-api-refresh-token");
+		const usernametext = usernamewrapcontainer.createSpan()
 
-				this.plugin.usernametext = usernametext;
-				this.plugin.refreshname(this.plugin.settings);				
+		this.plugin.usernametext = usernametext;
+		this.plugin.refreshname(this.plugin.settings);
 	}
 }
