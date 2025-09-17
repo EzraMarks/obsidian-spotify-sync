@@ -1,28 +1,30 @@
 import { App, TFile, TFolder, Notice, normalizePath } from 'obsidian';
 import { SpotifyApi } from '@spotify/web-api-ts-sdk';
-import type { Album, Artist, SimplifiedArtist } from '@spotify/web-api-ts-sdk';
+import type { Album, Artist, SimplifiedArtist, Track } from '@spotify/web-api-ts-sdk';
+import { ObsidianSpotifySettings } from './settings';
 
 export class SpotifySyncEngine {
     private app: App;
     private spotifyApi: SpotifyApi;
+    private settings: ObsidianSpotifySettings;
+    private readonly ARTISTS_PATH: string;
+    private readonly ALBUMS_PATH: string;
 
-    private readonly ARTISTS_PATH = 'Catalogs/Music/Artists';
-    private readonly ALBUMS_PATH = 'Catalogs/Music/Albums';
-
-    constructor(app: App, spotifyApi: SpotifyApi) {
+    constructor(app: App, spotifyApi: SpotifyApi, settings: ObsidianSpotifySettings) {
         this.app = app;
         this.spotifyApi = spotifyApi;
+        this.settings = settings;
+        this.ARTISTS_PATH = `${settings.music_catalog_base_path}/${settings.artists_path}`;
+        this.ALBUMS_PATH = `${settings.music_catalog_base_path}/${settings.albums_path}`;
     }
 
     async syncAll(): Promise<void> {
         try {
             new Notice('Starting Spotify sync...');
 
-            // Ensure directories exist
             await this.ensureDirectoryExists(this.ARTISTS_PATH);
             await this.ensureDirectoryExists(this.ALBUMS_PATH);
 
-            // Sync albums and artists
             await this.syncAlbums();
             await this.syncArtists();
 
@@ -36,32 +38,27 @@ export class SpotifySyncEngine {
     private async syncAlbums(): Promise<void> {
         console.log('Syncing albums...');
 
-        // Get all saved albums from Spotify
         const savedAlbums = await this.getAllSavedAlbums();
         const albumIds = new Set(savedAlbums.map(album => album.id));
 
-        // Update existing album notes and create new ones
         for (const album of savedAlbums) {
-            await this.createOrUpdateAlbumNote(album, true);
+            const fullAlbum = await this.spotifyApi.albums.get(album.id);
+            await this.createOrUpdateAlbumNote(fullAlbum, true);
         }
 
-        // Update existing album notes that are no longer saved
         await this.updateUnsavedAlbums(albumIds);
     }
 
     private async syncArtists(): Promise<void> {
         console.log('Syncing artists...');
 
-        // Get all followed artists from Spotify
         const followedArtists = await this.getAllFollowedArtists();
         const artistIds = new Set(followedArtists.map(artist => artist.id));
 
-        // Update existing artist notes and create new ones
         for (const artist of followedArtists) {
             await this.createOrUpdateArtistNote(artist, true);
         }
 
-        // Update existing artist notes that are no longer followed
         await this.updateUnfollowedArtists(artistIds);
     }
 
@@ -110,16 +107,15 @@ export class SpotifySyncEngine {
     }
 
     private async createOrUpdateAlbumNote(album: Album, isSaved: boolean): Promise<void> {
-        const fileName = this.sanitizeFileName(album.name);
+        const primaryArtist = album.artists[0]?.name || 'Unknown Artist';
+        const fileName = this.sanitizeFileName(`${album.name} - ${primaryArtist}`);
         const filePath = normalizePath(`${this.ALBUMS_PATH}/${fileName}.md`);
 
         const existingFile = this.app.vault.getAbstractFileByPath(filePath);
 
         if (existingFile instanceof TFile) {
-            // Update existing file
             await this.updateAlbumNote(existingFile, album, isSaved);
         } else {
-            // Create new file
             await this.createAlbumNote(filePath, album, isSaved);
         }
     }
@@ -131,10 +127,8 @@ export class SpotifySyncEngine {
         const existingFile = this.app.vault.getAbstractFileByPath(filePath);
 
         if (existingFile instanceof TFile) {
-            // Update existing file
             await this.updateArtistNote(existingFile, artist, isFollowed);
         } else {
-            // Create new file
             await this.createArtistNote(filePath, artist, isFollowed);
         }
     }
@@ -219,6 +213,8 @@ export class SpotifySyncEngine {
 
     private generateAlbumFrontmatter(album: Album, isSaved: boolean): string {
         const artists = album.artists.map(artist => artist.name).join(', ');
+        const primaryArtist = album.artists[0]?.name || 'Unknown Artist';
+        const artistLink = `"[[${this.ARTISTS_PATH}/${this.sanitizeFileName(primaryArtist)}]]"`;
         const genres = album.genres?.join(', ') || '';
 
         return `---
@@ -228,6 +224,7 @@ spotify_id: "${album.id}"
 spotify_uri: "${album.uri}"
 spotify_url: "${album.external_urls.spotify}"
 artists: "${artists}"
+primary_artist: ${artistLink}
 release_date: "${album.release_date}"
 total_tracks: ${album.total_tracks}
 genres: "${genres}"
@@ -255,18 +252,25 @@ last_synced: "${new Date().toISOString()}"
     }
 
     private generateAlbumContent(album: Album): string {
+        const primaryArtist = album.artists[0]?.name || 'Unknown Artist';
         const artists = album.artists.map(artist => `[[${this.sanitizeFileName(artist.name)}]]`).join(', ');
 
-        return `# ${album.name}
+        let tracksSection = '## Tracks\n\n';
+        if (album.tracks && album.tracks.items) {
+            album.tracks.items.forEach((track, index) => {
+                tracksSection += `### ${index + 1}. ${track.name}\n\n`;
+            });
+        } else {
+            tracksSection += '<!-- Track list will be populated when available -->\n\n';
+        }
+
+        return `# ${album.name} - ${primaryArtist}
 
 **Artists:** ${artists}
 **Release Date:** ${album.release_date}
 **Total Tracks:** ${album.total_tracks}
 
-## Track List
-<!-- Track list will be populated here if needed -->
-
-## Notes
+${tracksSection}## Notes
 <!-- Your notes about this album -->`;
     }
 
@@ -291,11 +295,14 @@ last_synced: "${new Date().toISOString()}"
         // Update specific frontmatter fields while preserving user content
         let updatedContent = content;
 
-        // Update fields that should always be current
         updatedContent = this.updateFrontmatterField(updatedContent, 'spotify_url', album.external_urls.spotify);
         updatedContent = this.updateFrontmatterField(updatedContent, 'popularity', album.popularity?.toString() || '0');
         updatedContent = this.updateFrontmatterField(updatedContent, 'is_saved', isSaved.toString());
         updatedContent = this.updateFrontmatterField(updatedContent, 'last_synced', new Date().toISOString());
+
+        const primaryArtist = album.artists[0]?.name || 'Unknown Artist';
+        const artistLink = `[[${this.sanitizeFileName(primaryArtist)}]]`;
+        updatedContent = this.updateFrontmatterField(updatedContent, 'primary_artist', artistLink);
 
         return updatedContent;
     }
@@ -303,7 +310,6 @@ last_synced: "${new Date().toISOString()}"
     private updateArtistFrontmatter(content: string, artist: Artist, isFollowed: boolean): string {
         let updatedContent = content;
 
-        // Update fields that should always be current
         updatedContent = this.updateFrontmatterField(updatedContent, 'spotify_url', artist.external_urls.spotify);
         updatedContent = this.updateFrontmatterField(updatedContent, 'popularity', artist.popularity.toString());
         updatedContent = this.updateFrontmatterField(updatedContent, 'followers', artist.followers.total.toString());
@@ -315,7 +321,7 @@ last_synced: "${new Date().toISOString()}"
 
     private updateFrontmatterField(content: string, field: string, value: string): string {
         const regex = new RegExp(`^${field}:.*$`, 'm');
-        const replacement = `${field}: "${value}"`;
+        const replacement = field === 'primary_artist' ? `${field}: ${value}` : `${field}: "${value}"`;
 
         if (regex.test(content)) {
             return content.replace(regex, replacement);
