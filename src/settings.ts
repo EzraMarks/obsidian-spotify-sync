@@ -89,7 +89,7 @@ export const DEFAULT_SETTINGS: ObsidianSpotifySettings = {
         expires_in: 0,
         refresh_token: ""
     },
-    music_catalog_base_path: 'Catalogs/Music',
+    music_catalog_base_path: 'Music',
     artists_path: 'Artists',
     albums_path: 'Albums',
     tracks_path: 'Tracks',
