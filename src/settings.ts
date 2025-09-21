@@ -37,14 +37,29 @@ export interface ObsidianSpotifySettings {
     albums_path: string;
 
     /**
+     * The path where track notes will be stored (relative to base path).
+     */
+    tracks_path: string;
+
+    /**
+     * List of Spotify playlist IDs to sync tracks from (in addition to Liked Songs).
+     */
+    playlist_ids: string[];
+
+    /**
+     * Mapping of playlist IDs to their human-readable names.
+     */
+    playlist_names: Record<string, string>;
+
+    /**
      * Whether to automatically sync on plugin load.
      */
     auto_sync_on_load: boolean;
 
     /**
-     * How often to automatically sync (in minutes). 0 = disabled.
+     * Whether to sync recent changes when app comes to foreground (mobile only).
      */
-    auto_sync_interval: number;
+    sync_on_app_foreground: boolean;
 }
 
 /**
@@ -62,8 +77,11 @@ export const DEFAULT_SETTINGS: ObsidianSpotifySettings = {
     music_catalog_base_path: 'Catalogs/Music',
     artists_path: 'Artists',
     albums_path: 'Albums',
+    tracks_path: 'Tracks',
+    playlist_ids: [],
+    playlist_names: {},
     auto_sync_on_load: false,
-    auto_sync_interval: 0,
+    sync_on_app_foreground: false,
 }
 
 export class ObsidianSpotifySettingsTab extends PluginSettingTab {
@@ -228,8 +246,19 @@ export class ObsidianSpotifySettingsTab extends PluginSettingTab {
                 }));
 
         new Setting(containerEl)
+            .setName('Tracks Subfolder')
+            .setDesc('Subfolder name for track notes (relative to base path)')
+            .addText(text => text
+                .setPlaceholder('e.g., Tracks')
+                .setValue(this.plugin.settings.tracks_path)
+                .onChange(async (value) => {
+                    this.plugin.settings.tracks_path = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        new Setting(containerEl)
             .setName('Auto-sync on plugin load')
-            .setDesc('Automatically sync your Spotify library when the plugin loads')
+            .setDesc('Automatically sync recent changes when the plugin loads')
             .addToggle(toggle => toggle
                 .setValue(this.plugin.settings.auto_sync_on_load)
                 .onChange(async (value) => {
@@ -238,32 +267,147 @@ export class ObsidianSpotifySettingsTab extends PluginSettingTab {
                 }));
 
         new Setting(containerEl)
-            .setName('Auto-sync interval')
-            .setDesc('How often to automatically sync (in minutes). Set to 0 to disable.')
-            .addSlider(slider => slider
-                .setLimits(0, 1440, 30) // 0 to 24 hours in 30-minute increments
-                .setValue(this.plugin.settings.auto_sync_interval)
-                .setDynamicTooltip()
+            .setName('Sync when app opens (Mobile)')
+            .setDesc('Automatically sync recent changes when re-opening Obsidian on mobile')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.sync_on_app_foreground)
                 .onChange(async (value) => {
-                    this.plugin.settings.auto_sync_interval = value;
+                    this.plugin.settings.sync_on_app_foreground = value;
                     await this.plugin.saveSettings();
+                    // Re-setup focus detection with new setting
+                    if (value) {
+                        this.plugin.setupAppFocusDetection();
+                    }
                 }));
+
+        // Track Sources Configuration
+        containerEl.createEl('h3', { text: 'Track Sources' });
+
+        containerEl.createDiv().innerHTML = `
+            <p><strong>Liked Songs</strong> are automatically synced from your Spotify library.</p>
+            <p>You can also add additional playlists to sync tracks from:</p>
+        `;
+
+        containerEl.createEl('h4', { text: 'Additional Playlists' });
+        containerEl.createDiv().innerHTML = `
+            <p>Find playlist IDs in Spotify URLs: <code>https://open.spotify.com/playlist/<strong>37i9dQZF1DXcBWIGoYBM5M</strong></code></p>
+        `;
+
+        // Display current playlists
+        const playlistContainer = containerEl.createDiv();
+        this.displayPlaylistSettings(playlistContainer);
 
         containerEl.createEl('h3', { text: 'Current Paths' });
         const pathsEl = containerEl.createDiv();
         pathsEl.innerHTML = `
 			<p><strong>Full Artists Path:</strong> <code>${this.plugin.settings.music_catalog_base_path}/${this.plugin.settings.artists_path}</code></p>
 			<p><strong>Full Albums Path:</strong> <code>${this.plugin.settings.music_catalog_base_path}/${this.plugin.settings.albums_path}</code></p>
+			<p><strong>Full Tracks Path:</strong> <code>${this.plugin.settings.music_catalog_base_path}/${this.plugin.settings.tracks_path}</code></p>
 		`;
 
         new Setting(containerEl)
             .setName('Manual Sync')
             .setDesc('Manually trigger a full sync of your Spotify library')
             .addButton(button => button
-                .setButtonText('Sync Now')
+                .setButtonText('Full Sync')
                 .setCta()
                 .onClick(async () => {
-                    await this.plugin.sync();
+                    await this.plugin.syncAll();
+                }))
+            .addButton(button => button
+                .setButtonText('Recent Sync')
+                .onClick(async () => {
+                    await this.plugin.syncRecent();
                 }));
+    }
+
+    private displayPlaylistSettings(container: HTMLElement): void {
+        container.empty();
+
+        const playlistList = container.createDiv('playlist-list');
+
+        this.plugin.settings.playlist_ids.forEach((playlistId, index) => {
+            const playlistName = this.plugin.settings.playlist_names[playlistId] || playlistId;
+            const displayName = playlistName === playlistId ? 'Unknown Playlist' : playlistName;
+
+            const playlistSetting = new Setting(playlistList)
+                .setName(`${displayName}`)
+                .setDesc(`ID: ${playlistId}`)
+                .addText(text => text
+                    .setPlaceholder('Playlist ID (e.g., 37i9dQZF1DXcBWIGoYBM5M)')
+                    .setValue(playlistId)
+                    .onChange(async (value) => {
+                        const oldId = this.plugin.settings.playlist_ids[index];
+                        const newId = value.trim();
+
+                        // Update the ID
+                        this.plugin.settings.playlist_ids[index] = newId;
+
+                        // Remove old mapping and try to fetch new one
+                        if (oldId && oldId !== newId) {
+                            delete this.plugin.settings.playlist_names[oldId];
+                        }
+
+                        if (newId && newId !== oldId) {
+                            await this.fetchAndStorePlaylistName(newId);
+                        }
+
+                        await this.plugin.saveSettings();
+                        this.displayPlaylistSettings(container);
+                    }))
+                .addButton(button => button
+                    .setButtonText('Refresh Name')
+                    .onClick(async () => {
+                        if (playlistId.trim()) {
+                            await this.fetchAndStorePlaylistName(playlistId);
+                            await this.plugin.saveSettings();
+                            this.displayPlaylistSettings(container);
+                        }
+                    }))
+                .addButton(button => button
+                    .setButtonText('Remove')
+                    .setWarning()
+                    .onClick(async () => {
+                        const removedId = this.plugin.settings.playlist_ids[index];
+                        this.plugin.settings.playlist_ids.splice(index, 1);
+
+                        // Clean up the name mapping
+                        if (removedId) {
+                            delete this.plugin.settings.playlist_names[removedId];
+                        }
+
+                        await this.plugin.saveSettings();
+                        this.displayPlaylistSettings(container);
+                    }));
+        });
+
+        // Add new playlist button
+        new Setting(container)
+            .setName('Add Playlist')
+            .setDesc('Add a new playlist to sync tracks from (in addition to Liked Songs)')
+            .addButton(button => button
+                .setButtonText('Add Playlist')
+                .setCta()
+                .onClick(async () => {
+                    this.plugin.settings.playlist_ids.push('');
+                    await this.plugin.saveSettings();
+                    this.displayPlaylistSettings(container);
+                }));
+    }
+
+    private async fetchAndStorePlaylistName(playlistId: string): Promise<void> {
+        if (!playlistId.trim() || !this.plugin.spotifyApi) {
+            return;
+        }
+
+        try {
+            const playlist = await this.plugin.spotifyApi.playlists.getPlaylist(playlistId, 'US', 'name');
+            this.plugin.settings.playlist_names[playlistId] = playlist.name;
+            console.log(`Fetched playlist name: ${playlist.name} for ID: ${playlistId}`);
+        } catch (error) {
+            console.error(`Failed to fetch playlist name for ID ${playlistId}:`, error);
+            // Keep the ID as fallback
+            this.plugin.settings.playlist_names[playlistId] = playlistId;
+        }
     }
 }

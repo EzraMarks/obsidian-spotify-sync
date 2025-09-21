@@ -22,6 +22,10 @@ export default class ObsidianSpotify extends Plugin {
 	private networkCheckTimer: NodeJS.Timer | null = null;
 	private isOnline: boolean = true;
 
+	// Debouncing to prevent double-execution of sync
+	private lastSyncTime: number = 0;
+	private readonly SYNC_DEBOUNCE_MS = 10000;
+
 	/**
 	 * Called when the plugin is loaded.
 	 */
@@ -37,8 +41,6 @@ export default class ObsidianSpotify extends Plugin {
 		if (this.spotifyAuth.isAuthenticated(this.settings)) {
 			this.spotifyApi = this.spotifyAuth.initializeSpotifySDK(this.settings);
 			this.tokenManager.startTokenRefresh(this.settings, this.manifest);
-		} else {
-			this.spotifyApi = undefined;
 		}
 
 		this.registerCommands();
@@ -47,9 +49,23 @@ export default class ObsidianSpotify extends Plugin {
 		// Auto-sync on load if enabled
 		if (this.settings.auto_sync_on_load && this.spotifyApi) {
 			setTimeout(async () => {
-				await this.sync();
+				await this.debouncedSyncRecent();
 			}, 5000); // Wait 5 seconds after plugin load
 		}
+	}
+
+	/**
+	 * Debounced recent sync to prevent double execution.
+	 */
+	private async debouncedSyncRecent(): Promise<void> {
+		const now = Date.now();
+		if (now - this.lastSyncTime < this.SYNC_DEBOUNCE_MS) {
+			console.log(`[${this.manifest.name}] Sync skipped - too recent (${Math.round((now - this.lastSyncTime) / 1000)}s ago)`);
+			return;
+		}
+
+		this.lastSyncTime = now;
+		await this.syncRecent();
 	}
 
 	/**
@@ -110,7 +126,15 @@ export default class ObsidianSpotify extends Plugin {
 			id: "spotify-full-sync",
 			name: "Full Sync",
 			callback: async () => {
-				await this.sync();
+				await this.syncAll();
+			}
+		});
+
+		this.addCommand({
+			id: "spotify-recent-sync",
+			name: "Recent Sync",
+			callback: async () => {
+				await this.syncRecent();
 			}
 		});
 	}
@@ -158,7 +182,7 @@ export default class ObsidianSpotify extends Plugin {
 	/**
 	 * Performs a full sync of Spotify data.
 	 */
-	async sync(): Promise<void> {
+	async syncAll(): Promise<void> {
 		if (!this.spotifyApi) {
 			new Notice('Please login to Spotify first');
 			return;
@@ -170,6 +194,51 @@ export default class ObsidianSpotify extends Plugin {
 		} catch (error) {
 			console.error('Sync failed:', error);
 			new Notice('Sync failed. Check console for details.');
+		}
+	}
+
+	async syncRecent(): Promise<void> {
+		if (!this.spotifyApi) {
+			new Notice('Please login to Spotify first');
+			return;
+		}
+
+		try {
+			const syncManager = new SpotifySyncEngine(this.app, this.spotifyApi, this.settings);
+			await syncManager.syncRecent();
+		} catch (error) {
+			console.error('Sync failed:', error);
+			new Notice('Sync failed. Check console for details.');
+		}
+	}
+
+	/**
+	 * Initialize app focus detection for mobile.
+	 */
+	setupAppFocusDetection(): void {
+		if (Platform.isMobileApp && this.settings.sync_on_app_foreground) {
+			// Page Visibility API - most reliable for mobile app switching
+			document.addEventListener('visibilitychange', () => {
+				if (document.visibilityState === 'visible') {
+					this.debouncedSyncRecent();
+				}
+			});
+
+			// Additional mobile app events for better coverage
+			document.addEventListener('resume', () => {
+				console.log(`[${this.manifest.name}] App resumed from background`);
+				this.debouncedSyncRecent();
+			});
+
+			// iOS-specific page show event
+			document.addEventListener('pageshow', (event: PageTransitionEvent) => {
+				if (event.persisted) {
+					console.log(`[${this.manifest.name}] App returned from background (pageshow)`);
+					this.debouncedSyncRecent();
+				}
+			});
+
+			console.log(`[${this.manifest.name}] App focus detection initialized`);
 		}
 	}
 

@@ -1,14 +1,34 @@
 import { App, TFile, TFolder, Notice, normalizePath } from 'obsidian';
 import { SpotifyApi } from '@spotify/web-api-ts-sdk';
-import type { Album, Artist, SimplifiedArtist, Track } from '@spotify/web-api-ts-sdk';
+import type { Album, Artist, MaxInt, SimplifiedArtist, Track, PlaylistedTrack, SavedAlbum, SavedTrack } from '@spotify/web-api-ts-sdk';
 import { ObsidianSpotifySettings } from './settings';
+
+interface EnrichedTrack extends SavedTrack {
+    // Array of playlist names where this track was sourced from
+    sources: string[];
+}
+
+type SyncOptions = { isFullSync: boolean };
 
 export class SpotifySyncEngine {
     private app: App;
     private spotifyApi: SpotifyApi;
     private settings: ObsidianSpotifySettings;
+
+    // Path configuration
     private readonly ARTISTS_PATH: string;
     private readonly ALBUMS_PATH: string;
+    private readonly TRACKS_PATH: string;
+
+    // API limits and batch sizes
+    private readonly API_PAGE_SIZE: MaxInt<50> = 50;
+    private readonly ALBUMS_BATCH_SIZE = 20;
+    private readonly RECENT_SYNC_LIMIT: MaxInt<50> = 20;
+
+    // Spotify ID to file mappings for efficient lookups
+    private trackIdToFile = new Map<string, TFile>();
+    private albumIdToFile = new Map<string, TFile>();
+    private artistIdToFile = new Map<string, TFile>();
 
     constructor(app: App, spotifyApi: SpotifyApi, settings: ObsidianSpotifySettings) {
         this.app = app;
@@ -16,353 +36,495 @@ export class SpotifySyncEngine {
         this.settings = settings;
         this.ARTISTS_PATH = `${settings.music_catalog_base_path}/${settings.artists_path}`;
         this.ALBUMS_PATH = `${settings.music_catalog_base_path}/${settings.albums_path}`;
+        this.TRACKS_PATH = `${settings.music_catalog_base_path}/${settings.tracks_path}`;
     }
 
+    // PUBLIC API
     async syncAll(): Promise<void> {
+        await this.sync({ isFullSync: true });
+    }
+
+    async syncRecent(): Promise<void> {
+        await this.sync({ isFullSync: false });
+    }
+
+    // MAIN SYNC ORCHESTRATION
+    private async sync(options: SyncOptions): Promise<void> {
         try {
-            new Notice('Starting Spotify sync...');
+            new Notice(`Starting ${options.isFullSync ? 'full' : 'recent'} Spotify sync...`);
 
             await this.ensureDirectoryExists(this.ARTISTS_PATH);
             await this.ensureDirectoryExists(this.ALBUMS_PATH);
+            await this.ensureDirectoryExists(this.TRACKS_PATH);
+            await this.buildIdMappings();
 
-            await this.syncAlbums();
-            await this.syncArtists();
+            // Upsert artists first (no dependencies)
+            await this.upsertArtists(options);
 
-            new Notice('Spotify sync completed successfully!');
+            // Upsert albums (depend on artists for basic info, but no track lists yet)
+            const newAlbums = await this.upsertAlbums(options);
+
+            // Upsert tracks (depend on artists and albums for basic info)
+            const newTracks = await this.upsertTracks(options);
+
+            // Update album metadata to include tracks that were just synced
+            if (options.isFullSync) {
+                await this.updateAlbumTracks(newAlbums.map(item => item.album.id));
+            } else {
+                const affectedAlbumIds = newTracks
+                    .filter(track => track.track.album.album_type !== 'single')
+                    .map(track => track.track.album.id);
+                await this.updateAlbumTracks([...new Set(affectedAlbumIds)]);
+            }
+
+            new Notice(`${options.isFullSync ? 'Full' : 'Recent'} Spotify sync completed successfully!`);
         } catch (error) {
             console.error('Spotify sync failed:', error);
             new Notice('Spotify sync failed. Check console for details.');
         }
     }
 
-    private async syncAlbums(): Promise<void> {
-        console.log('Syncing albums...');
+    // ARTIST SYNC
+    private async upsertArtists(options: SyncOptions): Promise<Artist[]> {
+        console.log('Upserting artist notes...');
 
-        const savedAlbums = await this.getAllSavedAlbums();
-        const albumIds = new Set(savedAlbums.map(album => album.id));
+        const followedArtists = options.isFullSync
+            ? await this.getAllFollowedArtists()
+            : await this.getRecentFollowedArtists();
 
-        for (const album of savedAlbums) {
-            const fullAlbum = await this.spotifyApi.albums.get(album.id);
-            await this.createOrUpdateAlbumNote(fullAlbum, true);
+        console.log(`Found ${followedArtists.length} artists to process`);
+        await Promise.all(followedArtists.map(artist => this.upsertArtist(artist)));
+
+        if (options.isFullSync) {
+            this.markRemovedItemsAsNotInLibrary(this.artistIdToFile, followedArtists.map(a => a.id));
         }
 
-        await this.updateUnsavedAlbums(albumIds);
+        return followedArtists;
     }
 
-    private async syncArtists(): Promise<void> {
-        console.log('Syncing artists...');
+    private async getRecentFollowedArtists(): Promise<Artist[]> {
+        const response = await this.spotifyApi.currentUser.followedArtists(undefined, this.RECENT_SYNC_LIMIT);
+        return response.artists.items.filter(artist => !this.artistIdToFile.has(artist.id));
+    }
 
-        const followedArtists = await this.getAllFollowedArtists();
-        const artistIds = new Set(followedArtists.map(artist => artist.id));
+    // ALBUM SYNC
+    private async upsertAlbums(options: SyncOptions): Promise<SavedAlbum[]> {
+        console.log('Upserting album notes...');
 
-        for (const artist of followedArtists) {
-            await this.createOrUpdateArtistNote(artist, true);
+        const savedAlbums = options.isFullSync
+            ? await this.getAllSavedAlbums()
+            : await this.getRecentSavedAlbums();
+
+        const actualAlbums = savedAlbums.filter(item => item.album.album_type !== 'single');
+        console.log(`Found ${actualAlbums.length} albums to process (excluding singles)`);
+
+        await Promise.all(actualAlbums.map(item => this.upsertAlbum(item)));
+
+        if (options.isFullSync) {
+            this.markRemovedItemsAsNotInLibrary(this.albumIdToFile, actualAlbums.map(item => item.album.id));
         }
 
-        await this.updateUnfollowedArtists(artistIds);
+        return actualAlbums;
     }
 
-    private async getAllSavedAlbums(): Promise<Album[]> {
-        const albums: Album[] = [];
+    private async getRecentSavedAlbums(): Promise<SavedAlbum[]> {
+        const response = await this.spotifyApi.currentUser.albums.savedAlbums(this.RECENT_SYNC_LIMIT, 0);
+        return response.items.filter(item => !this.albumIdToFile.has(item.album.id));
+    }
+
+    // TRACK SYNC
+    private async upsertTracks(options: SyncOptions): Promise<EnrichedTrack[]> {
+        console.log('Upserting track notes...');
+
+        const enrichedTracks = new Map<string, EnrichedTrack>();
+        const mergeTrack = this.createTrackMerger(enrichedTracks);
+
+        await this.collectLikedSongs(options, mergeTrack);
+        await this.collectPlaylistTracks(options, mergeTrack);
+
+        const allTracks = Array.from(enrichedTracks.values());
+        console.log(`Upserting ${allTracks.length} total track notes...`);
+
+        await Promise.all(
+            allTracks.map(track =>
+                this.upsertTrack(track.track, track.sources, track.added_at)
+            )
+        );
+
+        if (options.isFullSync) {
+            this.markRemovedItemsAsNotInLibrary(this.trackIdToFile, allTracks.map(t => t.track.id));
+        }
+
+        return allTracks;
+    }
+
+    private createTrackMerger(enrichedTracks: Map<string, EnrichedTrack>) {
+        return (savedTrack: SavedTrack, playlistName: string) => {
+            const existing = enrichedTracks.get(savedTrack.track.id);
+            if (existing) {
+                if (!existing.sources.includes(playlistName)) {
+                    existing.sources.push(playlistName);
+                }
+                if (savedTrack.added_at < existing.added_at) {
+                    existing.added_at = savedTrack.added_at;
+                }
+            } else {
+                enrichedTracks.set(savedTrack.track.id, {
+                    ...savedTrack,
+                    sources: [playlistName]
+                });
+            }
+        };
+    }
+
+    private async collectLikedSongs(
+        options: SyncOptions,
+        mergeTrack: (savedTrack: SavedTrack, playlistName: string) => void
+    ): Promise<void> {
+        try {
+            const savedTracks = options.isFullSync
+                ? await this.getAllSavedTracks()
+                : await this.getRecentSavedTracks();
+            savedTracks.forEach(track => mergeTrack(track, 'Liked Songs'));
+            console.log(`Found ${savedTracks.length} tracks from Liked Songs`);
+        } catch (error) {
+            console.error('Failed to get liked tracks:', error);
+        }
+    }
+
+    private async collectPlaylistTracks(
+        options: SyncOptions,
+        mergeTrack: (savedTrack: SavedTrack, playlistName: string) => void
+    ): Promise<void> {
+        if (!this.settings.playlist_ids?.length) return;
+
+        for (const playlistId of this.settings.playlist_ids) {
+            if (!playlistId.trim()) continue;
+            try {
+                const playlistedTracks = options.isFullSync
+                    ? await this.getAllPlaylistedTracks(playlistId)
+                    : await this.getRecentPlaylistedTracks(playlistId);
+                const playlistName = this.getPlaylistDisplayName(playlistId);
+                playlistedTracks
+                    .filter(this.isPlaylistedTrack)
+                    .forEach(item => mergeTrack(item, playlistName));
+                console.log(`Found ${playlistedTracks.length} tracks from playlist ${playlistName}`);
+            } catch (error) {
+                console.error(`Failed to get tracks from playlist ${playlistId}:`, error);
+            }
+        }
+    }
+
+    private async getRecentSavedTracks(): Promise<SavedTrack[]> {
+        const response = await this.spotifyApi.currentUser.tracks.savedTracks(this.RECENT_SYNC_LIMIT, 0);
+        return response.items.filter(item => !this.trackIdToFile.has(item.track.id));
+    }
+
+    private async getRecentPlaylistedTracks(playlistId: string): Promise<PlaylistedTrack[]> {
+        const response = await this.spotifyApi.playlists.getPlaylistItems(
+            playlistId, 'US', undefined, this.RECENT_SYNC_LIMIT, 0
+        );
+        return response.items.filter(item => !this.trackIdToFile.has(item.track.id));
+    }
+
+    // ALBUM TRACK UPDATES
+    private async updateAlbumTracks(albumIds: string[]): Promise<void> {
+        if (albumIds.length === 0) return;
+        console.log(`Updating track lists for ${albumIds.length} albums...`);
+
+        for (let i = 0; i < albumIds.length; i += this.ALBUMS_BATCH_SIZE) {
+            const batch = albumIds.slice(i, i + this.ALBUMS_BATCH_SIZE);
+            try {
+                const albums = await this.spotifyApi.albums.get(batch);
+                await Promise.all(albums.map(album => this.updateSingleAlbumTracks(album)));
+                const batchNum = Math.floor(i / this.ALBUMS_BATCH_SIZE) + 1;
+                const totalBatches = Math.ceil(albumIds.length / this.ALBUMS_BATCH_SIZE);
+                console.log(`Updated track lists for batch ${batchNum}/${totalBatches}`);
+            } catch (error) {
+                console.error(`Failed to update album tracks for batch starting at index ${i}:`, error);
+            }
+        }
+    }
+
+    private async updateSingleAlbumTracks(album: Album): Promise<void> {
+        const existingFile = this.albumIdToFile.get(album.id);
+        if (existingFile) {
+            await this.app.fileManager.processFrontMatter(existingFile, (frontmatter) => {
+                frontmatter.tracks = this.generateAlbumTracksArray(album);
+            });
+        }
+    }
+
+    // FRONTMATTER UPDATES
+    private async updateItemFrontmatter(
+        file: TFile,
+        spotifyData: Track | Album | Artist,
+        addedAt?: string,
+        sources?: string[]
+    ): Promise<void> {
+        await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+            const newCreatedDate = addedAt
+                ? new Date(addedAt).toISOString().split('T')[0]
+                : new Date().toISOString().split('T')[0];
+            if (!frontmatter.created || newCreatedDate < frontmatter.created) {
+                frontmatter.created = newCreatedDate;
+            }
+            frontmatter.modified = new Date().toISOString().split('T')[0];
+            frontmatter.generated = new Date().toISOString();
+
+            frontmatter.title = spotifyData.name;
+
+            if (this.isTrack(spotifyData)) {
+                const track = spotifyData;
+                const isNotSingle = track.album?.album_type !== 'single';
+                if (isNotSingle && track.album) {
+                    const hasAlbumNote = this.albumIdToFile.has(track.album.id);
+                    const primaryArtist = track.artists[0]?.name || 'Unknown Artist';
+                    frontmatter.album = hasAlbumNote
+                        ? `[[${this.sanitizeFileName(`${track.album.name} - ${primaryArtist}`)}|${track.album.name}]]`
+                        : track.album.name;
+                }
+                frontmatter.artists = track.artists.map(artist => {
+                    const hasArtistNote = this.artistIdToFile.has(artist.id);
+                    return hasArtistNote
+                        ? `[[${this.sanitizeFileName(artist.name)}|${artist.name}]]`
+                        : artist.name;
+                });
+            } else if (this.isAlbum(spotifyData)) {
+                const album = spotifyData;
+                frontmatter.artists = album.artists.map(artist => {
+                    const hasArtistNote = this.artistIdToFile.has(artist.id);
+                    return hasArtistNote
+                        ? `[[${this.sanitizeFileName(artist.name)}|${artist.name}]]`
+                        : artist.name;
+                });
+            }
+
+            frontmatter.cover = this.getBestImageUrl(
+                this.isTrack(spotifyData) ? spotifyData.album.images : spotifyData.images
+            );
+
+            if (this.isAlbum(spotifyData)) {
+                frontmatter.tracks = this.generateAlbumTracksArray(spotifyData);
+            }
+
+            frontmatter.spotify_library = true;
+            if (this.isTrack(spotifyData) && sources) {
+                frontmatter.spotify_playlists = sources;
+            }
+
+            frontmatter.spotify_id = spotifyData.id;
+            frontmatter.spotify_url = spotifyData.external_urls.spotify;
+
+            if (!frontmatter.aliases) {
+                frontmatter.aliases = [spotifyData.name];
+            }
+        });
+    }
+
+    // ID MAPPING SYSTEM
+    private async buildIdMappings(): Promise<void> {
+        console.log('Building Spotify ID to file mappings...');
+        this.trackIdToFile.clear();
+        this.albumIdToFile.clear();
+        this.artistIdToFile.clear();
+
+        await this.buildMappingForFolder(this.TRACKS_PATH, this.trackIdToFile);
+        await this.buildMappingForFolder(this.ALBUMS_PATH, this.albumIdToFile);
+        await this.buildMappingForFolder(this.ARTISTS_PATH, this.artistIdToFile);
+
+        console.log(`Built mappings: ${this.trackIdToFile.size} tracks, ${this.albumIdToFile.size} albums, ${this.artistIdToFile.size} artists`);
+    }
+
+    private async buildMappingForFolder(folderPath: string, mapping: Map<string, TFile>): Promise<void> {
+        const folder = this.app.vault.getAbstractFileByPath(folderPath);
+        if (!(folder instanceof TFolder)) return;
+
+        for (const file of folder.children) {
+            if (file instanceof TFile && file.extension === 'md') {
+                const spotifyId = await this.extractSpotifyIdFromFile(file);
+                if (spotifyId) {
+                    mapping.set(spotifyId, file);
+                }
+            }
+        }
+    }
+
+    private async extractSpotifyIdFromFile(file: TFile): Promise<string | null> {
+        try {
+            const metadata = this.app.metadataCache.getFileCache(file);
+            return metadata?.frontmatter?.spotify_id || null;
+        } catch (error) {
+            console.warn(`Failed to read metadata from file ${file.path}:`, error);
+            return null;
+        }
+    }
+
+    // SPOTIFY API PAGINATION HELPERS
+    private async getAllSavedTracks(): Promise<SavedTrack[]> {
+        return this.paginateSpotifyApi(
+            (offset) => this.spotifyApi.currentUser.tracks.savedTracks(this.API_PAGE_SIZE, offset)
+        );
+    }
+
+    private async getAllPlaylistedTracks(playlistId: string): Promise<PlaylistedTrack[]> {
+        return this.paginateSpotifyApi(
+            (offset) => this.spotifyApi.playlists.getPlaylistItems(
+                playlistId, 'US', undefined, this.API_PAGE_SIZE, offset
+            )
+        );
+    }
+
+    private async getAllSavedAlbums(): Promise<SavedAlbum[]> {
+        return this.paginateSpotifyApi(
+            (offset) => this.spotifyApi.currentUser.albums.savedAlbums(this.API_PAGE_SIZE, offset)
+        );
+    }
+
+    private async paginateSpotifyApi<T>(
+        fetchPage: (offset: number) => Promise<{ items: T[] }>
+    ): Promise<T[]> {
+        const allItems: T[] = [];
         let offset = 0;
-        const limit = 50;
-
         while (true) {
-            const response = await this.spotifyApi.currentUser.albums.savedAlbums(limit, offset);
-            albums.push(...response.items.map(item => item.album));
-
-            if (response.items.length < limit) break;
-            offset += limit;
+            const response = await fetchPage(offset);
+            allItems.push(...response.items);
+            if (response.items.length < this.API_PAGE_SIZE) break;
+            offset += this.API_PAGE_SIZE;
         }
-
-        return albums;
+        return allItems;
     }
 
     private async getAllFollowedArtists(): Promise<Artist[]> {
         const artists: Artist[] = [];
         let after: string | undefined = undefined;
-        const limit = 50;
 
         while (true) {
-            const response = await this.spotifyApi.currentUser.followedArtists(after, limit);
+            const response = await this.spotifyApi.currentUser.followedArtists(after, this.API_PAGE_SIZE);
             artists.push(...response.artists.items);
 
-            // Check if we have more items to fetch
-            if (response.artists.items.length < limit || !response.artists.next) {
-                break;
-            }
+            if (response.artists.items.length < this.API_PAGE_SIZE || !response.artists.next) break;
 
-            // Extract the 'after' cursor from the next URL
-            // The next URL contains the after parameter we need
             if (response.artists.next) {
                 const nextUrl = new URL(response.artists.next);
                 after = nextUrl.searchParams.get('after') || undefined;
             }
-
-            // If we can't get the after parameter, break to avoid infinite loop
             if (!after) break;
         }
-
         return artists;
     }
 
-    private async createOrUpdateAlbumNote(album: Album, isSaved: boolean): Promise<void> {
+    // TYPE GUARDS
+    private isTrack(item: Track | Album | Artist): item is Track {
+        return item.type === 'track';
+    }
+
+    private isAlbum(item: Track | Album | Artist): item is Album {
+        return item.type === 'album';
+    }
+
+    private isPlaylistedTrack(item: PlaylistedTrack): item is PlaylistedTrack<Track> {
+        return item.track.type === 'track';
+    }
+
+    // FILE AND DATA HELPERS
+    private generateTrackFileName(track: Track): string {
+        const primaryArtist = track.artists[0]?.name || 'Unknown Artist';
+        const isSingle = track.album.album_type === 'single';
+        return isSingle
+            ? this.sanitizeFileName(`${track.name} - ${primaryArtist}`)
+            : this.sanitizeFileName(`${track.name} - ${track.album.name} - ${primaryArtist}`);
+    }
+
+    private getPlaylistDisplayName(playlistId: string): string {
+        return this.settings.playlist_names[playlistId] || playlistId;
+    }
+
+    private async upsertTrack(track: Track, sources: string[], addedAt?: string): Promise<void> {
+        const fileName = this.generateTrackFileName(track);
+        const file = await this.getOrCreateNote(track.id, fileName, this.TRACKS_PATH, this.trackIdToFile);
+        if (file) await this.updateItemFrontmatter(file, track, addedAt, sources);
+    }
+
+    private async upsertAlbum(savedAlbum: SavedAlbum): Promise<void> {
+        const album = savedAlbum.album;
         const primaryArtist = album.artists[0]?.name || 'Unknown Artist';
         const fileName = this.sanitizeFileName(`${album.name} - ${primaryArtist}`);
-        const filePath = normalizePath(`${this.ALBUMS_PATH}/${fileName}.md`);
-
-        const existingFile = this.app.vault.getAbstractFileByPath(filePath);
-
-        if (existingFile instanceof TFile) {
-            await this.updateAlbumNote(existingFile, album, isSaved);
-        } else {
-            await this.createAlbumNote(filePath, album, isSaved);
-        }
+        const file = await this.getOrCreateNote(album.id, fileName, this.ALBUMS_PATH, this.albumIdToFile);
+        if (file) await this.updateItemFrontmatter(file, album, savedAlbum.added_at);
     }
 
-    private async createOrUpdateArtistNote(artist: Artist, isFollowed: boolean): Promise<void> {
+    private async upsertArtist(artist: Artist): Promise<void> {
         const fileName = this.sanitizeFileName(artist.name);
-        const filePath = normalizePath(`${this.ARTISTS_PATH}/${fileName}.md`);
-
-        const existingFile = this.app.vault.getAbstractFileByPath(filePath);
-
-        if (existingFile instanceof TFile) {
-            await this.updateArtistNote(existingFile, artist, isFollowed);
-        } else {
-            await this.createArtistNote(filePath, artist, isFollowed);
-        }
+        const file = await this.getOrCreateNote(artist.id, fileName, this.ARTISTS_PATH, this.artistIdToFile);
+        if (file) await this.updateItemFrontmatter(file, artist);
     }
 
-    private async createAlbumNote(filePath: string, album: Album, isSaved: boolean): Promise<void> {
-        const frontmatter = this.generateAlbumFrontmatter(album, isSaved);
-        const content = this.generateAlbumContent(album);
-        const fullContent = `${frontmatter}\n\n${content}`;
-
-        await this.app.vault.create(filePath, fullContent);
-        console.log(`Created album note: ${album.name}`);
+    private getBestImageUrl(images: { url: string; width: number; height: number }[], targetSize: number = 300): string {
+        if (!images?.length) return '';
+        return images.reduce((best, current) => {
+            const bestDistance = Math.abs(best.width - targetSize);
+            const currentDistance = Math.abs(current.width - targetSize);
+            return currentDistance < bestDistance ? current : best;
+        }).url;
     }
 
-    private async createArtistNote(filePath: string, artist: Artist, isFollowed: boolean): Promise<void> {
-        const frontmatter = this.generateArtistFrontmatter(artist, isFollowed);
-        const content = this.generateArtistContent(artist);
-        const fullContent = `${frontmatter}\n\n${content}`;
-
-        await this.app.vault.create(filePath, fullContent);
-        console.log(`Created artist note: ${artist.name}`);
+    private generateAlbumTracksArray(album: Album): string[] {
+        return album.tracks.items.map(track => {
+            const primaryArtist = track.artists[0]?.name || 'Unknown Artist';
+            const isSingle = album.album_type === 'single';
+            const trackFileName = isSingle
+                ? this.sanitizeFileName(`${track.name} - ${primaryArtist}`)
+                : this.sanitizeFileName(`${track.name} - ${album.name} - ${primaryArtist}`);
+            const hasTrackNote = this.trackIdToFile.has(track.id);
+            return hasTrackNote
+                ? `[[${trackFileName}|${track.name}]]`
+                : track.name;
+        });
     }
 
-    private async updateAlbumNote(file: TFile, album: Album, isSaved: boolean): Promise<void> {
-        const content = await this.app.vault.read(file);
-        const updatedContent = this.updateAlbumFrontmatter(content, album, isSaved);
-
-        if (updatedContent !== content) {
-            await this.app.vault.modify(file, updatedContent);
-            console.log(`Updated album note: ${album.name}`);
-        }
-    }
-
-    private async updateArtistNote(file: TFile, artist: Artist, isFollowed: boolean): Promise<void> {
-        const content = await this.app.vault.read(file);
-        const updatedContent = this.updateArtistFrontmatter(content, artist, isFollowed);
-
-        if (updatedContent !== content) {
-            await this.app.vault.modify(file, updatedContent);
-            console.log(`Updated artist note: ${artist.name}`);
-        }
-    }
-
-    private async updateUnsavedAlbums(savedAlbumIds: Set<string>): Promise<void> {
-        const albumsFolder = this.app.vault.getAbstractFileByPath(this.ALBUMS_PATH);
-        if (!(albumsFolder instanceof TFolder)) return;
-
-        for (const file of albumsFolder.children) {
-            if (file instanceof TFile && file.extension === 'md') {
-                const content = await this.app.vault.read(file);
-                const spotifyId = this.extractSpotifyId(content);
-
-                if (spotifyId && !savedAlbumIds.has(spotifyId)) {
-                    const updatedContent = this.updateSavedStatus(content, false);
-                    if (updatedContent !== content) {
-                        await this.app.vault.modify(file, updatedContent);
-                        console.log(`Updated unsaved album: ${file.basename}`);
-                    }
-                }
-            }
-        }
-    }
-
-    private async updateUnfollowedArtists(followedArtistIds: Set<string>): Promise<void> {
-        const artistsFolder = this.app.vault.getAbstractFileByPath(this.ARTISTS_PATH);
-        if (!(artistsFolder instanceof TFolder)) return;
-
-        for (const file of artistsFolder.children) {
-            if (file instanceof TFile && file.extension === 'md') {
-                const content = await this.app.vault.read(file);
-                const spotifyId = this.extractSpotifyId(content);
-
-                if (spotifyId && !followedArtistIds.has(spotifyId)) {
-                    const updatedContent = this.updateFollowedStatus(content, false);
-                    if (updatedContent !== content) {
-                        await this.app.vault.modify(file, updatedContent);
-                        console.log(`Updated unfollowed artist: ${file.basename}`);
-                    }
-                }
-            }
-        }
-    }
-
-    private generateAlbumFrontmatter(album: Album, isSaved: boolean): string {
-        const artists = album.artists.map(artist => artist.name).join(', ');
-        const primaryArtist = album.artists[0]?.name || 'Unknown Artist';
-        const artistLink = `"[[${this.ARTISTS_PATH}/${this.sanitizeFileName(primaryArtist)}]]"`;
-        const genres = album.genres?.join(', ') || '';
-
-        return `---
-name: "${album.name}"
-type: album
-spotify_id: "${album.id}"
-spotify_uri: "${album.uri}"
-spotify_url: "${album.external_urls.spotify}"
-artists: "${artists}"
-primary_artist: ${artistLink}
-release_date: "${album.release_date}"
-total_tracks: ${album.total_tracks}
-genres: "${genres}"
-popularity: ${album.popularity || 0}
-is_saved: ${isSaved}
-last_synced: "${new Date().toISOString()}"
----`;
-    }
-
-    private generateArtistFrontmatter(artist: Artist, isFollowed: boolean): string {
-        const genres = artist.genres.join(', ');
-
-        return `---
-name: "${artist.name}"
-type: artist
-spotify_id: "${artist.id}"
-spotify_uri: "${artist.uri}"
-spotify_url: "${artist.external_urls.spotify}"
-genres: "${genres}"
-popularity: ${artist.popularity}
-followers: ${artist.followers.total}
-is_followed: ${isFollowed}
-last_synced: "${new Date().toISOString()}"
----`;
-    }
-
-    private generateAlbumContent(album: Album): string {
-        const primaryArtist = album.artists[0]?.name || 'Unknown Artist';
-        const artists = album.artists.map(artist => `[[${this.sanitizeFileName(artist.name)}]]`).join(', ');
-
-        let tracksSection = '## Tracks\n\n';
-        if (album.tracks && album.tracks.items) {
-            album.tracks.items.forEach((track, index) => {
-                tracksSection += `### ${index + 1}. ${track.name}\n\n`;
-            });
-        } else {
-            tracksSection += '<!-- Track list will be populated when available -->\n\n';
-        }
-
-        return `# ${album.name} - ${primaryArtist}
-
-**Artists:** ${artists}
-**Release Date:** ${album.release_date}
-**Total Tracks:** ${album.total_tracks}
-
-${tracksSection}## Notes
-<!-- Your notes about this album -->`;
-    }
-
-    private generateArtistContent(artist: Artist): string {
-        return `# ${artist.name}
-
-**Genres:** ${artist.genres.join(', ')}
-**Popularity:** ${artist.popularity}/100
-**Followers:** ${artist.followers.total.toLocaleString()}
-
-## Biography
-<!-- Artist biography and information -->
-
-## Albums
-<!-- Links to artist's albums will appear here -->
-
-## Notes
-<!-- Your notes about this artist -->`;
-    }
-
-    private updateAlbumFrontmatter(content: string, album: Album, isSaved: boolean): string {
-        // Update specific frontmatter fields while preserving user content
-        let updatedContent = content;
-
-        updatedContent = this.updateFrontmatterField(updatedContent, 'spotify_url', album.external_urls.spotify);
-        updatedContent = this.updateFrontmatterField(updatedContent, 'popularity', album.popularity?.toString() || '0');
-        updatedContent = this.updateFrontmatterField(updatedContent, 'is_saved', isSaved.toString());
-        updatedContent = this.updateFrontmatterField(updatedContent, 'last_synced', new Date().toISOString());
-
-        const primaryArtist = album.artists[0]?.name || 'Unknown Artist';
-        const artistLink = `[[${this.sanitizeFileName(primaryArtist)}]]`;
-        updatedContent = this.updateFrontmatterField(updatedContent, 'primary_artist', artistLink);
-
-        return updatedContent;
-    }
-
-    private updateArtistFrontmatter(content: string, artist: Artist, isFollowed: boolean): string {
-        let updatedContent = content;
-
-        updatedContent = this.updateFrontmatterField(updatedContent, 'spotify_url', artist.external_urls.spotify);
-        updatedContent = this.updateFrontmatterField(updatedContent, 'popularity', artist.popularity.toString());
-        updatedContent = this.updateFrontmatterField(updatedContent, 'followers', artist.followers.total.toString());
-        updatedContent = this.updateFrontmatterField(updatedContent, 'is_followed', isFollowed.toString());
-        updatedContent = this.updateFrontmatterField(updatedContent, 'last_synced', new Date().toISOString());
-
-        return updatedContent;
-    }
-
-    private updateFrontmatterField(content: string, field: string, value: string): string {
-        const regex = new RegExp(`^${field}:.*$`, 'm');
-        const replacement = field === 'primary_artist' ? `${field}: ${value}` : `${field}: "${value}"`;
-
-        if (regex.test(content)) {
-            return content.replace(regex, replacement);
-        } else {
-            // Add field if it doesn't exist
-            const frontmatterEndIndex = content.indexOf('---', 3);
-            if (frontmatterEndIndex !== -1) {
-                const beforeEnd = content.substring(0, frontmatterEndIndex);
-                const afterEnd = content.substring(frontmatterEndIndex);
-                return `${beforeEnd}${replacement}\n${afterEnd}`;
-            }
-        }
-
-        return content;
-    }
-
-    private updateSavedStatus(content: string, isSaved: boolean): string {
-        return this.updateFrontmatterField(content, 'is_saved', isSaved.toString());
-    }
-
-    private updateFollowedStatus(content: string, isFollowed: boolean): string {
-        return this.updateFrontmatterField(content, 'is_followed', isFollowed.toString());
-    }
-
-    private extractSpotifyId(content: string): string | null {
-        const match = content.match(/^spotify_id:\s*"([^"]+)"$/m);
-        return match ? match[1] : null;
+    private async markRemovedItemsAsNotInLibrary(idToFile: Map<string, TFile>, idsInLibrary: string[]): Promise<void> {
+        const idsInLibrarySet = new Set(idsInLibrary);
+        await Promise.all(
+            [...idToFile.entries()]
+                .filter(([id]) => !idsInLibrarySet.has(id))
+                .map(([, file]) => this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+                    frontmatter.spotify_library = false;
+                    frontmatter.spotify_playlists = undefined;
+                }))
+        );
     }
 
     private sanitizeFileName(name: string): string {
-        // Remove or replace characters that aren't allowed in file names
         return name
-            .replace(/[<>:"/\\|?*]/g, '') // Remove invalid characters
-            .replace(/\s+/g, ' ') // Normalize whitespace
+            .replace(/[<>:"/\\|?*]/g, '')
+            .replace(/\s+/g, ' ')
             .trim();
+    }
+
+    private async getOrCreateNote(
+        spotifyId: string,
+        fileName: string,
+        folderPath: string,
+        idToFileMap: Map<string, TFile>
+    ): Promise<TFile | null> {
+        let file = idToFileMap.get(spotifyId);
+        if (!file) {
+            const filePath = normalizePath(`${folderPath}/${fileName}.md`);
+            const existingFile = this.app.vault.getAbstractFileByPath(filePath);
+            if (existingFile) {
+                console.log(`Skipping creating note - filename conflict at ${filePath}`);
+                return null;
+            }
+            file = await this.app.vault.create(filePath, '---\n---\n\n');
+            idToFileMap.set(spotifyId, file);
+        }
+        return file;
     }
 
     private async ensureDirectoryExists(path: string): Promise<void> {
         const normalizedPath = normalizePath(path);
         const exists = this.app.vault.getAbstractFileByPath(normalizedPath);
-
         if (!exists) {
             await this.app.vault.createFolder(normalizedPath);
             console.log(`Created directory: ${normalizedPath}`);
