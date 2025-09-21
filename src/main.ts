@@ -46,6 +46,10 @@ export default class ObsidianSpotify extends Plugin {
 		this.registerCommands();
 		this.registerAuthProtocolHandler();
 
+		if (this.settings.sync_on_app_foreground) {
+			this.setupAppFocusDetection();
+		}
+
 		// Auto-sync on load if enabled
 		if (this.settings.auto_sync_on_load && this.spotifyApi) {
 			setTimeout(async () => {
@@ -57,7 +61,7 @@ export default class ObsidianSpotify extends Plugin {
 	/**
 	 * Debounced recent sync to prevent double execution.
 	 */
-	private async debouncedSyncRecent(): Promise<void> {
+	private async debouncedSyncRecent(silent?: boolean): Promise<void> {
 		const now = Date.now();
 		if (now - this.lastSyncTime < this.SYNC_DEBOUNCE_MS) {
 			console.log(`[${this.manifest.name}] Sync skipped - too recent (${Math.round((now - this.lastSyncTime) / 1000)}s ago)`);
@@ -65,7 +69,7 @@ export default class ObsidianSpotify extends Plugin {
 		}
 
 		this.lastSyncTime = now;
-		await this.syncRecent();
+		await this.syncRecent(silent);
 	}
 
 	/**
@@ -190,14 +194,14 @@ export default class ObsidianSpotify extends Plugin {
 
 		try {
 			const syncManager = new SpotifySyncEngine(this.app, this.spotifyApi, this.settings);
-			await syncManager.syncAll();
+			await syncManager.sync({ isFullSync: true });
 		} catch (error) {
 			console.error('Sync failed:', error);
 			new Notice('Sync failed. Check console for details.');
 		}
 	}
 
-	async syncRecent(): Promise<void> {
+	async syncRecent(silent?: boolean): Promise<void> {
 		if (!this.spotifyApi) {
 			new Notice('Please login to Spotify first');
 			return;
@@ -205,7 +209,7 @@ export default class ObsidianSpotify extends Plugin {
 
 		try {
 			const syncManager = new SpotifySyncEngine(this.app, this.spotifyApi, this.settings);
-			await syncManager.syncRecent();
+			await syncManager.sync({ isFullSync: false, silent });
 		} catch (error) {
 			console.error('Sync failed:', error);
 			new Notice('Sync failed. Check console for details.');
@@ -220,21 +224,21 @@ export default class ObsidianSpotify extends Plugin {
 			// Page Visibility API - most reliable for mobile app switching
 			document.addEventListener('visibilitychange', () => {
 				if (document.visibilityState === 'visible') {
-					this.debouncedSyncRecent();
+					this.debouncedSyncRecent(true);
 				}
 			});
 
 			// Additional mobile app events for better coverage
 			document.addEventListener('resume', () => {
 				console.log(`[${this.manifest.name}] App resumed from background`);
-				this.debouncedSyncRecent();
+				this.debouncedSyncRecent(true);
 			});
 
 			// iOS-specific page show event
 			document.addEventListener('pageshow', (event: PageTransitionEvent) => {
 				if (event.persisted) {
 					console.log(`[${this.manifest.name}] App returned from background (pageshow)`);
-					this.debouncedSyncRecent();
+					this.debouncedSyncRecent(true);
 				}
 			});
 

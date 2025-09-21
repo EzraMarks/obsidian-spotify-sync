@@ -8,7 +8,7 @@ interface EnrichedTrack extends SavedTrack {
     sources: string[];
 }
 
-type SyncOptions = { isFullSync: boolean };
+export type SyncOptions = { isFullSync: boolean, silent?: boolean };
 
 export class SpotifySyncEngine {
     private app: App;
@@ -39,19 +39,9 @@ export class SpotifySyncEngine {
         this.TRACKS_PATH = `${settings.music_catalog_base_path}/${settings.tracks_path}`;
     }
 
-    // PUBLIC API
-    async syncAll(): Promise<void> {
-        await this.sync({ isFullSync: true });
-    }
-
-    async syncRecent(): Promise<void> {
-        await this.sync({ isFullSync: false });
-    }
-
-    // MAIN SYNC ORCHESTRATION
-    private async sync(options: SyncOptions): Promise<void> {
+    async sync(options: SyncOptions): Promise<void> {
         try {
-            new Notice(`Starting ${options.isFullSync ? 'full' : 'recent'} Spotify sync...`);
+            options.silent || new Notice(`Starting ${options.isFullSync ? 'full' : 'recent'} Spotify sync...`);
 
             await this.ensureDirectoryExists(this.ARTISTS_PATH);
             await this.ensureDirectoryExists(this.ALBUMS_PATH);
@@ -77,10 +67,10 @@ export class SpotifySyncEngine {
                 await this.updateAlbumTracks([...new Set(affectedAlbumIds)]);
             }
 
-            new Notice(`${options.isFullSync ? 'Full' : 'Recent'} Spotify sync completed successfully!`);
+            options.silent || new Notice(`${options.isFullSync ? 'Full' : 'Recent'} Spotify sync completed successfully!`);
         } catch (error) {
             console.error('Spotify sync failed:', error);
-            new Notice('Spotify sync failed. Check console for details.');
+            options.silent || new Notice('Spotify sync failed. Check console for details.');
         }
     }
 
