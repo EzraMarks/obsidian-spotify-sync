@@ -60,6 +60,21 @@ export interface ObsidianSpotifySettings {
      * Whether to sync recent changes when app comes to foreground (mobile only).
      */
     sync_on_app_foreground: boolean;
+
+    /**
+     * Default frontmatter to include when creating new track notes.
+     */
+    default_track_frontmatter: string;
+
+    /**
+     * Default frontmatter to include when creating new album notes.
+     */
+    default_album_frontmatter: string;
+
+    /**
+     * Default frontmatter to include when creating new artist notes.
+     */
+    default_artist_frontmatter: string;
 }
 
 /**
@@ -82,11 +97,14 @@ export const DEFAULT_SETTINGS: ObsidianSpotifySettings = {
     playlist_names: {},
     auto_sync_on_load: false,
     sync_on_app_foreground: false,
+    default_track_frontmatter: '',
+    default_album_frontmatter: '',
+    default_artist_frontmatter: '',
 }
 
 export class ObsidianSpotifySettingsTab extends PluginSettingTab {
     plugin: ObsidianSpotify;
-    private currentTab: 'spotify' | 'sync' = 'spotify';
+    private currentTab: 'spotify' | 'sync' | 'frontmatter' = 'spotify';
 
     constructor(app: App, plugin: ObsidianSpotify) {
         super(app, plugin);
@@ -105,6 +123,8 @@ export class ObsidianSpotifySettingsTab extends PluginSettingTab {
             this.displaySpotifyTab(tabContentEl);
         } else if (this.currentTab === 'sync') {
             this.displaySyncTab(tabContentEl);
+        } else if (this.currentTab === 'frontmatter') {
+            this.displayFrontmatterTab(tabContentEl);
         }
     }
 
@@ -137,6 +157,19 @@ export class ObsidianSpotifySettingsTab extends PluginSettingTab {
 
         syncTabEl.addEventListener('click', () => {
             this.currentTab = 'sync';
+            this.display();
+        });
+
+        // Frontmatter Tab
+        const frontmatterTabEl = tabNavEl.createDiv('tab-button');
+        frontmatterTabEl.textContent = 'Default Frontmatter';
+        frontmatterTabEl.style.padding = '10px 20px';
+        frontmatterTabEl.style.cursor = 'pointer';
+        frontmatterTabEl.style.borderBottom = this.currentTab === 'frontmatter' ? '2px solid var(--interactive-accent)' : 'none';
+        frontmatterTabEl.style.color = this.currentTab === 'frontmatter' ? 'var(--interactive-accent)' : 'var(--text-muted)';
+
+        frontmatterTabEl.addEventListener('click', () => {
+            this.currentTab = 'frontmatter';
             this.display();
         });
     }
@@ -319,6 +352,64 @@ export class ObsidianSpotifySettingsTab extends PluginSettingTab {
                 .onClick(async () => {
                     await this.plugin.syncRecent();
                 }));
+    }
+
+    private displayFrontmatterTab(containerEl: HTMLElement): void {
+        containerEl.createEl('h2', { text: 'Default Frontmatter' });
+
+        const descriptionEl = containerEl.createDiv();
+        descriptionEl.innerHTML = `
+            <p>Define additional frontmatter properties to include when creating new notes. These will be added alongside the automatically generated Spotify metadata.</p>
+            <p>Format each property as <code>property: value</code> on separate lines, just like regular frontmatter.</p>
+            <p><strong>Example:</strong></p>
+            <pre><code>tags:
+  - music/track
+rating: 
+notes: 
+mood:</code></pre>
+        `;
+
+        new Setting(containerEl)
+            .setName('Default Track Frontmatter')
+            .setDesc('Additional frontmatter to include when creating track notes')
+            .addTextArea(text => text
+                .setPlaceholder('tags:\n  - music/track\nrating: \nnotes:')
+                .setValue(this.plugin.settings.default_track_frontmatter)
+                .onChange(async (value) => {
+                    this.plugin.settings.default_track_frontmatter = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        new Setting(containerEl)
+            .setName('Default Album Frontmatter')
+            .setDesc('Additional frontmatter to include when creating album notes')
+            .addTextArea(text => text
+                .setPlaceholder('tags:\n  - music/album\nrating:')
+                .setValue(this.plugin.settings.default_album_frontmatter)
+                .onChange(async (value) => {
+                    this.plugin.settings.default_album_frontmatter = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        new Setting(containerEl)
+            .setName('Default Artist Frontmatter')
+            .setDesc('Additional frontmatter to include when creating artist notes')
+            .addTextArea(text => text
+                .setPlaceholder('tags:\n  - music/artist\ngenres:')
+                .setValue(this.plugin.settings.default_artist_frontmatter)
+                .onChange(async (value) => {
+                    this.plugin.settings.default_artist_frontmatter = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        const noteEl = containerEl.createDiv();
+        noteEl.style.marginTop = '20px';
+        noteEl.style.padding = '10px';
+        noteEl.style.backgroundColor = 'var(--background-secondary)';
+        noteEl.style.borderRadius = '5px';
+        noteEl.innerHTML = `
+            <p><strong>Note:</strong> Default frontmatter is only applied when creating new notes. Existing notes will not be modified. The plugin will automatically add its own metadata (title, spotify_id, spotify_url, etc.) alongside your custom frontmatter.</p>
+        `;
     }
 
     private displayPlaylistSettings(container: HTMLElement): void {

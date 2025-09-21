@@ -1,4 +1,4 @@
-import { App, TFile, TFolder, Notice, normalizePath } from 'obsidian';
+import { App, TFile, TFolder, Notice, normalizePath, parseYaml } from 'obsidian';
 import { SpotifyApi } from '@spotify/web-api-ts-sdk';
 import type { Album, Artist, MaxInt, SimplifiedArtist, Track, PlaylistedTrack, SavedAlbum, SavedTrack } from '@spotify/web-api-ts-sdk';
 import { ObsidianSpotifySettings } from './settings';
@@ -263,6 +263,8 @@ export class SpotifySyncEngine {
         sources?: string[]
     ): Promise<void> {
         await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+            const isNew = !frontmatter.created;
+
             const newCreatedDate = addedAt
                 ? new Date(addedAt).toISOString().split('T')[0]
                 : new Date().toISOString().split('T')[0];
@@ -319,7 +321,37 @@ export class SpotifySyncEngine {
             if (!frontmatter.aliases) {
                 frontmatter.aliases = [spotifyData.name];
             }
+
+            // Apply default frontmatter only for new files
+            if (isNew) {
+                const defaultFrontmatter = this.getDefaultFrontmatter(spotifyData);
+                Object.assign(frontmatter, defaultFrontmatter);
+            }
         });
+    }
+
+    private getDefaultFrontmatter(spotifyData: Track | Album | Artist): Record<string, any> {
+        if (this.isTrack(spotifyData)) {
+            return this.parseDefaultFrontmatter(this.settings.default_track_frontmatter);
+        } else if (this.isAlbum(spotifyData)) {
+            return this.parseDefaultFrontmatter(this.settings.default_album_frontmatter);
+        } else {
+            return this.parseDefaultFrontmatter(this.settings.default_artist_frontmatter);
+        }
+    }
+
+    private parseDefaultFrontmatter(frontmatterText: string): Record<string, any> {
+        if (!frontmatterText || frontmatterText.trim() === '') {
+            return {};
+        }
+
+        try {
+            return parseYaml(frontmatterText) || {};
+        } catch (error) {
+            console.warn('Failed to parse default frontmatter YAML:', error);
+            console.warn('Frontmatter text:', frontmatterText);
+            return {};
+        }
     }
 
     // ID MAPPING SYSTEM
