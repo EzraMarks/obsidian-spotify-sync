@@ -248,7 +248,7 @@ export class SpotifySyncEngine {
     // FRONTMATTER UPDATES
     private async updateItemFrontmatter(
         file: TFile,
-        spotifyData: Track | Album | Artist,
+        spotifyEntity: Track | Album | Artist,
         addedAt?: string,
         sources?: string[]
     ): Promise<void> {
@@ -264,66 +264,59 @@ export class SpotifySyncEngine {
             frontmatter.modified = new Date().toISOString().split('T')[0];
             frontmatter.generated = new Date().toISOString();
 
-            frontmatter.title = spotifyData.name;
+            frontmatter.title = spotifyEntity.name;
 
-            if (this.isTrack(spotifyData)) {
-                const track = spotifyData;
-                const isNotSingle = track.album?.album_type !== 'single';
-                if (isNotSingle && track.album) {
-                    const hasAlbumNote = this.albumIdToFile.has(track.album.id);
-                    const primaryArtist = track.artists[0]?.name || 'Unknown Artist';
-                    frontmatter.album = hasAlbumNote
-                        ? `[[${this.sanitizeFileName(`${track.album.name} - ${primaryArtist}`)}|${track.album.name}]]`
-                        : track.album.name;
+            if (this.isTrack(spotifyEntity)) {
+                const isNotSingle = spotifyEntity.album.album_type !== 'single';
+                if (isNotSingle) {
+                    const albumFile = this.albumIdToFile.get(spotifyEntity.album.id);
+                    frontmatter.album = albumFile
+                        ? this.app.fileManager.generateMarkdownLink(albumFile, this.ALBUMS_PATH, undefined, spotifyEntity.album.name)
+                        : spotifyEntity.album.name;
                 }
-                frontmatter.artists = track.artists.map(artist => {
-                    const hasArtistNote = this.artistIdToFile.has(artist.id);
-                    return hasArtistNote
-                        ? `[[${this.sanitizeFileName(artist.name)}|${artist.name}]]`
-                        : artist.name;
-                });
-            } else if (this.isAlbum(spotifyData)) {
-                const album = spotifyData;
-                frontmatter.artists = album.artists.map(artist => {
-                    const hasArtistNote = this.artistIdToFile.has(artist.id);
-                    return hasArtistNote
-                        ? `[[${this.sanitizeFileName(artist.name)}|${artist.name}]]`
+            }
+
+            if (this.isTrack(spotifyEntity) || this.isAlbum(spotifyEntity)) {
+                frontmatter.artists = spotifyEntity.artists.map(artist => {
+                    const artistFile = this.artistIdToFile.get(artist.id);
+                    return artistFile
+                        ? this.app.fileManager.generateMarkdownLink(artistFile, this.ARTISTS_PATH, undefined, artist.name)
                         : artist.name;
                 });
             }
 
             frontmatter.cover = this.getBestImageUrl(
-                this.isTrack(spotifyData) ? spotifyData.album.images : spotifyData.images
+                this.isTrack(spotifyEntity) ? spotifyEntity.album.images : spotifyEntity.images
             );
 
-            if (this.isAlbum(spotifyData)) {
-                frontmatter.tracks = this.generateAlbumTracksArray(spotifyData);
+            if (this.isAlbum(spotifyEntity)) {
+                frontmatter.tracks = this.generateAlbumTracksArray(spotifyEntity);
             }
 
             frontmatter.spotify_library = true;
-            if (this.isTrack(spotifyData) && sources) {
+            if (this.isTrack(spotifyEntity) && sources) {
                 frontmatter.spotify_playlists = sources;
             }
 
-            frontmatter.spotify_id = spotifyData.id;
-            frontmatter.spotify_url = spotifyData.external_urls.spotify;
+            frontmatter.spotify_id = spotifyEntity.id;
+            frontmatter.spotify_url = spotifyEntity.external_urls.spotify;
 
             if (!frontmatter.aliases) {
-                frontmatter.aliases = [spotifyData.name];
+                frontmatter.aliases = [spotifyEntity.name];
             }
 
             // Apply default frontmatter only for new files
             if (isNew) {
-                const defaultFrontmatter = this.getDefaultFrontmatter(spotifyData);
+                const defaultFrontmatter = this.getDefaultFrontmatter(spotifyEntity);
                 Object.assign(frontmatter, defaultFrontmatter);
             }
         });
     }
 
-    private getDefaultFrontmatter(spotifyData: Track | Album | Artist): Record<string, any> {
-        if (this.isTrack(spotifyData)) {
+    private getDefaultFrontmatter(spotifyEntity: Track | Album | Artist): Record<string, any> {
+        if (this.isTrack(spotifyEntity)) {
             return this.parseDefaultFrontmatter(this.settings.default_track_frontmatter);
-        } else if (this.isAlbum(spotifyData)) {
+        } else if (this.isAlbum(spotifyEntity)) {
             return this.parseDefaultFrontmatter(this.settings.default_album_frontmatter);
         } else {
             return this.parseDefaultFrontmatter(this.settings.default_artist_frontmatter);
@@ -493,14 +486,9 @@ export class SpotifySyncEngine {
 
     private generateAlbumTracksArray(album: Album): string[] {
         return album.tracks.items.map(track => {
-            const primaryArtist = track.artists[0]?.name || 'Unknown Artist';
-            const isSingle = album.album_type === 'single';
-            const trackFileName = isSingle
-                ? this.sanitizeFileName(`${track.name} - ${primaryArtist}`)
-                : this.sanitizeFileName(`${track.name} - ${album.name} - ${primaryArtist}`);
-            const hasTrackNote = this.trackIdToFile.has(track.id);
-            return hasTrackNote
-                ? `[[${trackFileName}|${track.name}]]`
+            const trackFile = this.trackIdToFile.get(track.id);
+            return trackFile
+                ? this.app.fileManager.generateMarkdownLink(trackFile, this.ALBUMS_PATH, undefined, track.name)
                 : track.name;
         });
     }
