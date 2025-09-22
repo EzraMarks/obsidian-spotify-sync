@@ -261,7 +261,9 @@ export class SpotifySyncEngine {
             if (!frontmatter.created || newCreatedDate < frontmatter.created) {
                 frontmatter.created = newCreatedDate;
             }
-            frontmatter.modified = new Date().toISOString().split('T')[0];
+            if (isNew) { // modified date only updates for user edits
+                frontmatter.modified = new Date().toISOString().split('T')[0];
+            }
             frontmatter.generated = new Date().toISOString();
 
             frontmatter.title = spotifyEntity.name;
