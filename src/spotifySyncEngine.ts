@@ -1,4 +1,4 @@
-import { App, TFile, TFolder, Notice, normalizePath, parseYaml } from 'obsidian';
+import { App, TFile, TFolder, Notice, normalizePath, parseYaml, moment } from 'obsidian';
 import { SpotifyApi } from '@spotify/web-api-ts-sdk';
 import type { Album, Artist, MaxInt, SimplifiedArtist, Track, PlaylistedTrack, SavedAlbum, SavedTrack } from '@spotify/web-api-ts-sdk';
 import { ObsidianSpotifySettings } from './settings';
@@ -256,13 +256,13 @@ export class SpotifySyncEngine {
             const isNew = !frontmatter.created;
 
             const newCreatedDate = addedAt
-                ? new Date(addedAt).toISOString().split('T')[0]
-                : new Date().toISOString().split('T')[0];
+                ? moment(addedAt).format('YYYY-MM-DDTHH:mm:ss')
+                : moment().format('YYYY-MM-DDTHH:mm:ss');
             if (!frontmatter.created || newCreatedDate < frontmatter.created) {
                 frontmatter.created = newCreatedDate;
             }
             if (isNew) { // modified date only updates for user edits
-                frontmatter.modified = new Date().toISOString().split('T')[0];
+                frontmatter.modified = moment(addedAt).format('YYYY-MM-DD');
             }
             frontmatter.regenerated = new Date().toISOString();
 
