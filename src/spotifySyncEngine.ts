@@ -256,8 +256,8 @@ export class SpotifySyncEngine {
             const isNew = !frontmatter.created;
 
             const newCreatedDate = addedAt
-                ? moment(addedAt).format('YYYY-MM-DDTHH:mm:ss')
-                : moment().format('YYYY-MM-DDTHH:mm:ss');
+                ? moment(addedAt).format('YYYY-MM-DD')
+                : moment().format('YYYY-MM-DD');
             if (!frontmatter.created || newCreatedDate < frontmatter.created) {
                 frontmatter.created = newCreatedDate;
             }
