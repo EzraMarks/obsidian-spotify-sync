@@ -22,13 +22,15 @@ export class SpotifySyncEngine {
 
     // API limits and batch sizes
     private readonly API_PAGE_SIZE: MaxInt<50> = 50;
+    private readonly ARTISTS_BATCH_SIZE = 50;
     private readonly ALBUMS_BATCH_SIZE = 20;
+    private readonly TRACKS_BATCH_SIZE = 50;
     private readonly RECENT_SYNC_LIMIT: MaxInt<50> = 20;
 
-    // Spotify ID to file mappings for efficient lookups
-    private trackIdToFile = new Map<string, TFile>();
-    private albumIdToFile = new Map<string, TFile>();
-    private artistIdToFile = new Map<string, TFile>();
+    // Spotify URI to file mappings for efficient lookups
+    private trackUriToFile = new Map<string, TFile>();
+    private albumUriToFile = new Map<string, TFile>();
+    private artistUriToFile = new Map<string, TFile>();
 
     constructor(app: App, spotifyApi: SpotifyApi, settings: ObsidianSpotifySettings) {
         this.app = app;
@@ -46,23 +48,23 @@ export class SpotifySyncEngine {
             await this.ensureDirectoryExists(this.ARTISTS_PATH);
             await this.ensureDirectoryExists(this.ALBUMS_PATH);
             await this.ensureDirectoryExists(this.TRACKS_PATH);
-            await this.buildIdMappings();
+            await this.buildUriMappings();
 
             // Create notes in dependency order: artists <- albums <- tracks
             options.isFullSync
                 ? await this.upsertAllArtists()
                 : await this.upsertRecentArtists();
-            await this.buildMappingForFolder(this.ARTISTS_PATH, this.artistIdToFile);
+            await this.buildMappingForFolder(this.ARTISTS_PATH, this.artistUriToFile);
 
             options.isFullSync
                 ? await this.upsertAllAlbums()
                 : await this.upsertRecentAlbums();
-            await this.buildMappingForFolder(this.ALBUMS_PATH, this.albumIdToFile);
+            await this.buildMappingForFolder(this.ALBUMS_PATH, this.albumUriToFile);
 
             options.isFullSync
                 ? await this.upsertAllTracks()
                 : await this.upsertRecentTracks();
-            await this.buildMappingForFolder(this.TRACKS_PATH, this.trackIdToFile);
+            await this.buildMappingForFolder(this.TRACKS_PATH, this.trackUriToFile);
 
             options.silent || new Notice(`${options.isFullSync ? 'Full' : 'Recent'} Spotify sync completed successfully!`);
         } catch (error) {
@@ -84,10 +86,10 @@ export class SpotifySyncEngine {
 
         const followedArtists = await this.getAllFollowedArtists();
 
-        const followedArtistIds = new Set(followedArtists.map(artist => artist.id));
-        const unsavedArtistIds = [...this.artistIdToFile.keys()]
-            .filter(id => !followedArtistIds.has(id));
-        const unsavedArtists = await this.getArtistsById(unsavedArtistIds);
+        const followedArtistUris = new Set(followedArtists.map(artist => artist.uri));
+        const unsavedArtistUris = [...this.artistUriToFile.keys()]
+            .filter(uri => !followedArtistUris.has(uri));
+        const unsavedArtists = await this.getArtistsByUri(unsavedArtistUris);
 
         await Promise.all(followedArtists.map(artist =>
             this.upsertArtist(artist, true)
@@ -100,7 +102,7 @@ export class SpotifySyncEngine {
 
     private async getRecentFollowedArtists(): Promise<Artist[]> {
         const response = await this.spotifyApi.currentUser.followedArtists(undefined, this.RECENT_SYNC_LIMIT);
-        return response.artists.items.filter(artist => !this.artistIdToFile.has(artist.id));
+        return response.artists.items.filter(artist => !this.artistUriToFile.has(artist.uri));
     }
 
     // ALBUM SYNC
@@ -118,10 +120,10 @@ export class SpotifySyncEngine {
 
         const savedAlbums = await this.getAllSavedAlbums();
 
-        const savedAlbumIds = new Set(savedAlbums.map(item => item.album.id));
-        const unsavedAlbumIds = [...this.albumIdToFile.keys()]
-            .filter(id => !savedAlbumIds.has(id));
-        const unsavedAlbums = await this.getAlbumsById(unsavedAlbumIds);
+        const savedAlbumUris = new Set(savedAlbums.map(item => item.album.uri));
+        const unsavedAlbumUris = [...this.albumUriToFile.keys()]
+            .filter(uri => !savedAlbumUris.has(uri));
+        const unsavedAlbums = await this.getAlbumsByUri(unsavedAlbumUris);
 
         await Promise.all(savedAlbums.map(item =>
             this.upsertAlbum(item.album, true, item.added_at)
@@ -134,7 +136,7 @@ export class SpotifySyncEngine {
 
     private async getRecentSavedAlbums(): Promise<SavedAlbum[]> {
         const response = await this.spotifyApi.currentUser.albums.savedAlbums(this.RECENT_SYNC_LIMIT, 0);
-        const newSavedAlbumsOrSingles = response.items.filter(item => !this.albumIdToFile.has(item.album.id));
+        const newSavedAlbumsOrSingles = response.items.filter(item => !this.albumUriToFile.has(item.album.uri));
         return newSavedAlbumsOrSingles.filter(item => !this.isSingle(item.album));
     }
 
@@ -153,10 +155,10 @@ export class SpotifySyncEngine {
 
         const savedTracks = await this.getSavedTracks({ isFullSync: true });
 
-        const savedTrackIds = new Set(savedTracks.map(item => item.track.id));
-        const unsavedTrackIds = [...this.trackIdToFile.keys()]
-            .filter(id => !savedTrackIds.has(id));
-        const unsavedTracks = await this.getTracksById(unsavedTrackIds);
+        const savedTrackUris = new Set(savedTracks.map(item => item.track.uri));
+        const unsavedTrackUris = [...this.trackUriToFile.keys()]
+            .filter(uri => !savedTrackUris.has(uri));
+        const unsavedTracks = await this.getTracksByUri(unsavedTrackUris);
 
         await Promise.all(savedTracks.map(item =>
             this.upsertTrack(item.track, item.sources, true, item.added_at)
@@ -169,7 +171,7 @@ export class SpotifySyncEngine {
 
     private createTrackMerger(enrichedTracks: Map<string, EnrichedTrack>) {
         return (savedTrack: SavedTrack, playlistName: string) => {
-            const existing = enrichedTracks.get(savedTrack.track.id);
+            const existing = enrichedTracks.get(savedTrack.track.uri);
             if (existing) {
                 if (!existing.sources.includes(playlistName)) {
                     existing.sources.push(playlistName);
@@ -178,7 +180,7 @@ export class SpotifySyncEngine {
                     existing.added_at = savedTrack.added_at;
                 }
             } else {
-                enrichedTracks.set(savedTrack.track.id, {
+                enrichedTracks.set(savedTrack.track.uri, {
                     ...savedTrack,
                     sources: [playlistName]
                 });
@@ -186,11 +188,11 @@ export class SpotifySyncEngine {
         };
     }
 
-    private async getTracksById(trackIds: string[]): Promise<Track[]> {
+    private async getTracksByUri(trackUris: string[]): Promise<Track[]> {
         return this.batchSpotifyApi(
-            trackIds,
-            50, // Spotify's max for tracks endpoint
-            (albumIds) => this.spotifyApi.tracks.get(trackIds)
+            trackUris,
+            this.TRACKS_BATCH_SIZE,
+            (albumUris) => this.spotifyApi.tracks.get(trackUris)
         );
     }
 
@@ -244,14 +246,14 @@ export class SpotifySyncEngine {
 
     private async getRecentLikedSongs(): Promise<SavedTrack[]> {
         const response = await this.spotifyApi.currentUser.tracks.savedTracks(this.RECENT_SYNC_LIMIT, 0);
-        return response.items.filter(item => !this.trackIdToFile.has(item.track.id));
+        return response.items.filter(item => !this.trackUriToFile.has(item.track.uri));
     }
 
     private async getRecentPlaylistedTracks(playlistId: string): Promise<PlaylistedTrack[]> {
         const response = await this.spotifyApi.playlists.getPlaylistItems(
             playlistId, 'US', undefined, this.RECENT_SYNC_LIMIT, 0
         );
-        return response.items.filter(item => !this.trackIdToFile.has(item.track.id));
+        return response.items.filter(item => !this.trackUriToFile.has(item.track.uri));
     }
 
     // FRONTMATTER UPDATES
@@ -279,7 +281,7 @@ export class SpotifySyncEngine {
             if (this.isTrack(spotifyEntity)) {
                 const isNotSingle = !this.isSingle(spotifyEntity.album);
                 if (isNotSingle) {
-                    const albumFile = this.albumIdToFile.get(spotifyEntity.album.id);
+                    const albumFile = this.albumUriToFile.get(spotifyEntity.album.uri);
                     frontmatter.album = albumFile
                         ? this.app.fileManager.generateMarkdownLink(albumFile, this.ALBUMS_PATH, undefined, spotifyEntity.album.name)
                         : spotifyEntity.album.name;
@@ -288,7 +290,7 @@ export class SpotifySyncEngine {
 
             if (this.isTrack(spotifyEntity) || this.isAlbum(spotifyEntity)) {
                 frontmatter.artists = spotifyEntity.artists.map(artist => {
-                    const artistFile = this.artistIdToFile.get(artist.id);
+                    const artistFile = this.artistUriToFile.get(artist.uri);
                     return artistFile
                         ? this.app.fileManager.generateMarkdownLink(artistFile, this.ARTISTS_PATH, undefined, artist.name)
                         : artist.name;
@@ -308,6 +310,7 @@ export class SpotifySyncEngine {
                 frontmatter.spotify_playlists = sources;
             }
 
+            // TODO
             frontmatter.spotify_id = spotifyEntity.id;
             frontmatter.spotify_url = spotifyEntity.external_urls.spotify;
 
@@ -347,15 +350,15 @@ export class SpotifySyncEngine {
         }
     }
 
-    // ID MAPPING SYSTEM
-    private async buildIdMappings(): Promise<void> {
-        console.log('Building Spotify ID to file mappings...');
+    // URI MAPPING SYSTEM
+    private async buildUriMappings(): Promise<void> {
+        console.log('Building Spotify URI to file mappings...');
 
-        await this.buildMappingForFolder(this.TRACKS_PATH, this.trackIdToFile);
-        await this.buildMappingForFolder(this.ALBUMS_PATH, this.albumIdToFile);
-        await this.buildMappingForFolder(this.ARTISTS_PATH, this.artistIdToFile);
+        await this.buildMappingForFolder(this.TRACKS_PATH, this.trackUriToFile);
+        await this.buildMappingForFolder(this.ALBUMS_PATH, this.albumUriToFile);
+        await this.buildMappingForFolder(this.ARTISTS_PATH, this.artistUriToFile);
 
-        console.log(`Built mappings: ${this.trackIdToFile.size} tracks, ${this.albumIdToFile.size} albums, ${this.artistIdToFile.size} artists`);
+        console.log(`Built mappings: ${this.trackUriToFile.size} tracks, ${this.albumUriToFile.size} albums, ${this.artistUriToFile.size} artists`);
     }
 
     private async buildMappingForFolder(folderPath: string, mapping: Map<string, TFile>): Promise<void> {
@@ -365,17 +368,18 @@ export class SpotifySyncEngine {
 
         for (const file of folder.children) {
             if (file instanceof TFile && file.extension === 'md') {
-                const spotifyId = await this.extractSpotifyIdFromFile(file);
-                if (spotifyId) {
-                    mapping.set(spotifyId, file);
+                const spotifyUri = await this.extractSpotifyUriFromFile(file);
+                if (spotifyUri) {
+                    mapping.set(spotifyUri, file);
                 }
             }
         }
     }
 
-    private async extractSpotifyIdFromFile(file: TFile): Promise<string | null> {
+    private async extractSpotifyUriFromFile(file: TFile): Promise<string | null> {
         try {
             const metadata = this.app.metadataCache.getFileCache(file);
+            // TODO
             return metadata?.frontmatter?.spotify_id || null;
         } catch (error) {
             console.warn(`Failed to read metadata from file ${file.path}:`, error);
@@ -407,11 +411,11 @@ export class SpotifySyncEngine {
             .filter(item => !this.isSingle(item.album));
     }
 
-    private async getAlbumsById(albumIds: string[]): Promise<Album[]> {
+    private async getAlbumsByUri(albumUris: string[]): Promise<Album[]> {
         return this.batchSpotifyApi(
-            albumIds,
-            20, // Spotify's max for albums endpoint
-            (albumIds) => this.spotifyApi.albums.get(albumIds)
+            albumUris,
+            this.ALBUMS_BATCH_SIZE,
+            (albumUris) => this.spotifyApi.albums.get(albumUris)
         );
     }
 
@@ -465,11 +469,11 @@ export class SpotifySyncEngine {
     }
 
 
-    private async getArtistsById(artistIds: string[]): Promise<Artist[]> {
+    private async getArtistsByUri(artistUris: string[]): Promise<Artist[]> {
         return this.batchSpotifyApi(
-            artistIds,
-            50, // Spotify's max for artists endpoint
-            (artistIds) => this.spotifyApi.artists.get(artistIds)
+            artistUris,
+            this.ARTISTS_BATCH_SIZE,
+            (artistUris) => this.spotifyApi.artists.get(artistUris)
         );
     }
 
@@ -506,7 +510,7 @@ export class SpotifySyncEngine {
         addedAt?: string
     ): Promise<void> {
         const fileName = this.generateTrackFileName(track);
-        const file = await this.getOrCreateNote(track.id, fileName, this.TRACKS_PATH, this.trackIdToFile);
+        const file = await this.getOrCreateNote(track.uri, fileName, this.TRACKS_PATH, this.trackUriToFile);
         if (file) await this.updateItemFrontmatter(file, track, isInSpotifyLibrary, addedAt, sources);
     }
 
@@ -517,7 +521,7 @@ export class SpotifySyncEngine {
     ): Promise<void> {
         const primaryArtist = album.artists[0]?.name || 'Unknown Artist';
         const fileName = this.sanitizeFileName(`${album.name} - ${primaryArtist}`);
-        const file = await this.getOrCreateNote(album.id, fileName, this.ALBUMS_PATH, this.albumIdToFile);
+        const file = await this.getOrCreateNote(album.uri, fileName, this.ALBUMS_PATH, this.albumUriToFile);
         if (file) await this.updateItemFrontmatter(file, album, isInSpotifyLibrary, addedAt);
     }
 
@@ -526,7 +530,7 @@ export class SpotifySyncEngine {
         isInSpotifyLibrary: boolean
     ): Promise<void> {
         const fileName = this.sanitizeFileName(artist.name);
-        const file = await this.getOrCreateNote(artist.id, fileName, this.ARTISTS_PATH, this.artistIdToFile);
+        const file = await this.getOrCreateNote(artist.uri, fileName, this.ARTISTS_PATH, this.artistUriToFile);
         if (file) await this.updateItemFrontmatter(file, artist, isInSpotifyLibrary);
     }
 
@@ -543,11 +547,11 @@ export class SpotifySyncEngine {
         return album.tracks.items.map(track => track.name);
     }
 
-    private async markRemovedItemsAsNotInLibrary(idToFile: Map<string, TFile>, idsInLibrary: string[]): Promise<void> {
-        const idsInLibrarySet = new Set(idsInLibrary);
+    private async markRemovedItemsAsNotInLibrary(uriToFile: Map<string, TFile>, urisInLibrary: string[]): Promise<void> {
+        const urisInLibrarySet = new Set(urisInLibrary);
         await Promise.all(
-            [...idToFile.entries()]
-                .filter(([id]) => !idsInLibrarySet.has(id))
+            [...uriToFile.entries()]
+                .filter(([uri]) => !urisInLibrarySet.has(uri))
                 .map(([, file]) => this.app.fileManager.processFrontMatter(file, (frontmatter) => {
                     frontmatter.spotify_library = false;
                     frontmatter.spotify_playlists = undefined;
@@ -566,9 +570,9 @@ export class SpotifySyncEngine {
         spotifyId: string,
         fileName: string,
         folderPath: string,
-        idToFileMap: Map<string, TFile>
+        uriToFileMap: Map<string, TFile>
     ): Promise<TFile | null> {
-        let file = idToFileMap.get(spotifyId);
+        let file = uriToFileMap.get(spotifyUri);
         if (!file) {
             const filePath = normalizePath(`${folderPath}/${fileName}.md`);
             const existingFile = this.app.vault.getAbstractFileByPath(filePath);
@@ -577,7 +581,7 @@ export class SpotifySyncEngine {
                 return null;
             }
             file = await this.app.vault.create(filePath, '---\n---\n\n');
-            idToFileMap.set(spotifyId, file);
+            uriToFileMap.set(spotifyUri, file);
         }
         return file;
     }
