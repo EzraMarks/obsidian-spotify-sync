@@ -1,9 +1,9 @@
 import { Platform, App, Editor, MarkdownView, Modal, Notice, Plugin, PluginManifest, PluginSettingTab, Setting, requestUrl, SettingTab } from 'obsidian';
 import { SpotifyApi, AccessToken } from '@spotify/web-api-ts-sdk';
-import { SpotifySyncEngine } from './spotifySyncEngine';
+import { SpotifySyncEngine } from './sync/spotifySyncEngine';
 import { ObsidianSpotifySettings, DEFAULT_SETTINGS, ObsidianSpotifySettingsTab } from './settings';
-import { SpotifyAuth } from './spotifyAuth';
-import { TokenManager } from './tokenManager';
+import { SpotifyAuth } from './auth/spotifyAuth';
+import { TokenManager } from './auth/tokenManager';
 
 /**
  * Main Obsidian Spotify plugin class.

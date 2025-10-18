@@ -1,7 +1,7 @@
 import { PluginManifest } from 'obsidian';
 import { SpotifyApi } from '@spotify/web-api-ts-sdk';
-import ObsidianSpotify from './main';
-import { ObsidianSpotifySettings } from './settings';
+import ObsidianSpotify from '../main';
+import { ObsidianSpotifySettings } from '../settings';
 
 /**
  * Manages Spotify token refresh intervals and online/offline events.

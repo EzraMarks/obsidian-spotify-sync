@@ -1,7 +1,7 @@
 import { PluginManifest, requestUrl } from 'obsidian';
 import { SpotifyApi } from '@spotify/web-api-ts-sdk';
-import { ObsidianSpotifySettings } from './settings';
-import ObsidianSpotify from './main';
+import { ObsidianSpotifySettings } from '../settings';
+import ObsidianSpotify from '../main';
 
 /**
  * Handles all Spotify authentication operations including OAuth flow, token refresh, and user management.
