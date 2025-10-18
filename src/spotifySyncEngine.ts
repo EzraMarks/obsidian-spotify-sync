@@ -162,8 +162,8 @@ export class SpotifySyncEngine {
             this.upsertTrack(item.track, item.sources, true, item.added_at)
         ));
 
-        await Promise.all(unsavedTracks.map(album =>
-            this.upsertTrack(album, [], false)
+        await Promise.all(unsavedTracks.map(track =>
+            this.upsertTrack(track, [], false)
         ));
     }
 
@@ -271,10 +271,8 @@ export class SpotifySyncEngine {
             if (!frontmatter.created || newCreatedDate < frontmatter.created) {
                 frontmatter.created = newCreatedDate;
             }
-            if (isNew) { // modified date only updates for user edits
-                frontmatter.modified = moment(addedAt).format('YYYY-MM-DD');
-            }
-            frontmatter.regenerated = new Date().toISOString();
+
+            frontmatter.modified = moment(addedAt).format('YYYY-MM-DD');
 
             frontmatter.title = spotifyEntity.name;
 
