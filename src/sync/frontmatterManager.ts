@@ -75,8 +75,8 @@ export class FrontmatterManager {
         entity: Track | Album | Artist,
         isInSpotifyLibrary: boolean
     ): void {
-        fm.title = entity.name;
-        fm.cover = this.dataHelpers.getBestImageUrl(
+        fm.title = fm.title ?? entity.name;
+        fm.cover = fm.cover ?? this.dataHelpers.getBestImageUrl(
             this.dataHelpers.isTrack(entity) ? entity.album.images : entity.images
         );
         fm.spotify_library = isInSpotifyLibrary;
@@ -90,9 +90,7 @@ export class FrontmatterManager {
             spotify: entity.external_urls.spotify,
         };
 
-        if (!fm.aliases) {
-            fm.aliases = [entity.name];
-        }
+        fm.aliases = fm.aliases ?? [entity.name];
     }
 
     private updateEntitySpecificFrontmatter(
@@ -130,7 +128,7 @@ export class FrontmatterManager {
 
     private addAlbumFields(fm: MusicFrontmatter, album: Album): void {
         fm.artists = this.getArtistLinks(album.artists);
-        fm.tracks = this.dataHelpers.generateAlbumTracksArray(album);
+        fm.tracks = fm.tracks ?? this.dataHelpers.generateAlbumTracksArray(album);
     }
 
     private getArtistLinks(artists: any[]): string[] {
