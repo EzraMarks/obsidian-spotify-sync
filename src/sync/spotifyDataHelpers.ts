@@ -18,18 +18,26 @@ export class SpotifyDataHelpers {
     }
 
     generateTrackFileName(track: Track): string {
-        const primaryArtist = track.artists[0]?.name || 'Unknown Artist';
+        const primaryArtist = track.artists[0]?.name;
         const isSingle = this.isSingle(track.album);
         return isSingle
-            ? this.sanitizeFileName(`${track.name} - ${primaryArtist}`)
-            : this.sanitizeFileName(`${track.name} - ${track.album.name} - ${primaryArtist}`);
+            ? this.buildSafeFileName(track.name, primaryArtist)
+            : this.buildSafeFileName(track.name, track.album.name, primaryArtist);
     }
 
-    sanitizeFileName(name: string): string {
-        return name
-            .replace(/[<>:"/\\|?*]/g, '')
-            .replace(/\s+/g, ' ')
-            .trim();
+    /**
+     * Combines non-empty strings into a safe filename, joined with " - "
+     * @example buildSafeFileName("Song Name", "Album", "Artist") => "Song Name - Album - Artist"
+     */
+    buildSafeFileName(...parts: string[]): string {
+        return parts
+            .filter(part => part && part.trim())
+            .map(part => part
+                .replace(/[<>:"/\\|?*-]/g, '')
+                .replace(/\s+/g, ' ')
+                .trim()
+            )
+            .join(' - ');
     }
 
     getPlaylistDisplayName(playlistId: string): string {

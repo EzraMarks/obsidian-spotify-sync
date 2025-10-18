@@ -58,7 +58,7 @@ export class SpotifyApiClient {
             ? await this.getAllSavedAlbums()
             : await this.getRecentSavedAlbums();
 
-        const savedAlbums = savedAlbumsAndSingles.filter(item => this.dataHelpers.isSingle(item.album));
+        const savedAlbums = savedAlbumsAndSingles.filter(item => !this.dataHelpers.isSingle(item.album));
         return savedAlbums;
     }
 

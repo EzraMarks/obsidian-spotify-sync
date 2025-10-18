@@ -87,7 +87,7 @@ export class FrontmatterManager {
         };
         fm.music_sources = {
             ...fm.music_sources,
-            spotify: entity.href,
+            spotify: entity.external_urls.spotify,
         };
 
         if (!fm.aliases) {
@@ -112,7 +112,12 @@ export class FrontmatterManager {
         if (!this.dataHelpers.isSingle(track.album)) {
             const albumFile = this.fileManager.getAlbumUriToFile().get(track.album.uri);
             fm.album = albumFile
-                ? this.app.fileManager.generateMarkdownLink(albumFile, this.albumsPath, undefined, track.album.name)
+                ? this.generateMarkdownLink(
+                    this.settings.music_catalog_base_path
+                    + "/" + this.settings.albums_path
+                    + "/" + albumFile.basename,
+                    track.album.name
+                )
                 : track.album.name;
         }
 
@@ -132,9 +137,21 @@ export class FrontmatterManager {
         return artists.map(artist => {
             const artistFile = this.fileManager.getArtistUriToFile().get(artist.uri);
             return artistFile
-                ? this.app.fileManager.generateMarkdownLink(artistFile, this.artistsPath, undefined, artist.name)
+                ? this.generateMarkdownLink(
+                    this.settings.music_catalog_base_path
+                    + "/" + this.settings.artists_path
+                    + "/" + artistFile.basename,
+                    artist.name
+                )
                 : artist.name;
         });
+    }
+
+    private generateMarkdownLink(
+        filePath: string,
+        alias: string
+    ) {
+        return `[[${filePath}|${alias}]]`;
     }
 
     private finalizeFrontmatter(

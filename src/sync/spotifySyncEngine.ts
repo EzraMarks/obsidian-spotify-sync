@@ -196,7 +196,7 @@ export class SpotifySyncEngine {
         addedAt?: string,
     ): Promise<void> {
         const primaryArtist = album.artists[0]?.name || 'Unknown Artist';
-        const fileName = this.dataHelpers.sanitizeFileName(`${album.name} - ${primaryArtist}`);
+        const fileName = this.dataHelpers.buildSafeFileName(album.name, primaryArtist);
         const file = await this.fileManager.getOrCreateNote(
             album.uri,
             fileName,
@@ -212,7 +212,7 @@ export class SpotifySyncEngine {
         artist: Artist,
         isInSpotifyLibrary: boolean
     ): Promise<void> {
-        const fileName = this.dataHelpers.sanitizeFileName(artist.name);
+        const fileName = this.dataHelpers.buildSafeFileName(artist.name);
         const file = await this.fileManager.getOrCreateNote(
             artist.uri,
             fileName,
