@@ -4,8 +4,8 @@ import { ObsidianSpotifySettings } from '../settings';
 export class SpotifyDataHelpers {
     constructor(private settings: ObsidianSpotifySettings) { }
 
-    getBestImageUrl(images: { url: string; width: number; height: number }[], targetSize: number = 300): string {
-        if (!images?.length) return '';
+    getBestImageUrl(images: { url: string; width: number; height: number }[], targetSize: number = 300): string | undefined {
+        if (!images?.length) return undefined;
         return images.reduce((best, current) => {
             const bestDistance = Math.abs(best.width - targetSize);
             const currentDistance = Math.abs(current.width - targetSize);

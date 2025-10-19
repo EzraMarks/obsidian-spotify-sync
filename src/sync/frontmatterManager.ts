@@ -82,7 +82,7 @@ export class FrontmatterManager {
         fm.spotify_library = isInSpotifyLibrary;
         fm.music_ids = {
             ...fm.music_ids,
-            spotify_id: entity.id,
+            spotify_id: entity.id || undefined, // local tracks have no spotify_id
             spotify_uri: entity.uri,
         };
         fm.music_sources = {
@@ -116,7 +116,7 @@ export class FrontmatterManager {
                     + "/" + albumFile.basename,
                     track.album.name
                 )
-                : track.album.name;
+                : track.album.name || undefined;
         }
 
         fm.artists = this.getArtistLinks(track.artists);
