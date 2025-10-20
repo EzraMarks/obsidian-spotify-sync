@@ -10,7 +10,7 @@ interface TrackMetadata {
 
 export class LocalTrackManager {
     // Map from lookup key (e.g. "Artist | Album | Track" to file)
-    private trackCache: Map<string, TFile> = new Map();
+    private trackCache: Map<string, TFile> | undefined = undefined;
     private scanInProgress: Promise<void> | undefined;
 
     constructor(
@@ -45,6 +45,8 @@ export class LocalTrackManager {
             console.log('No music folder path configured');
             return;
         }
+
+        this.trackCache = new Map();
 
         const normalizedPath = normalizePath(this.musicFolderPath);
         this.scanInProgress = this.scanFolder(normalizedPath);
