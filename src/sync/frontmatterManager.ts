@@ -36,9 +36,7 @@ export class FrontmatterManager {
         private app: App,
         private settings: ObsidianSpotifySettings,
         private dataHelpers: SpotifyDataHelpers,
-        private fileManager: FileManager,
-        private artistsPath: string,
-        private albumsPath: string
+        private fileManager: FileManager
     ) { }
 
     async updateItemFrontmatter(
@@ -46,7 +44,8 @@ export class FrontmatterManager {
         spotifyEntity: Track | Album | Artist,
         isInSpotifyLibrary: boolean,
         addedAt?: string,
-        sources?: string[]
+        sources?: string[],
+        localTrackFile?: TFile | undefined
     ): Promise<void> {
         await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
             const isNew = !frontmatter.created;
@@ -55,7 +54,11 @@ export class FrontmatterManager {
 
             // Update all fields
             this.updateCommonFrontmatter(musicFrontmatter, spotifyEntity, isInSpotifyLibrary);
-            this.updateEntitySpecificFrontmatter(musicFrontmatter, spotifyEntity, sources);
+            if (this.dataHelpers.isTrack(spotifyEntity)) {
+                this.addTrackFields(musicFrontmatter, spotifyEntity, sources, localTrackFile);
+            } else if (this.dataHelpers.isAlbum(spotifyEntity)) {
+                this.addAlbumFields(musicFrontmatter, spotifyEntity);
+            }
 
             // Only update if there are changes or it's a new file
             const hasChanges = before !== this.createSnapshot(musicFrontmatter);
@@ -93,22 +96,15 @@ export class FrontmatterManager {
         fm.aliases = fm.aliases ?? [entity.name];
     }
 
-    private updateEntitySpecificFrontmatter(
+    private addTrackFields(
         fm: MusicFrontmatter,
-        entity: Track | Album | Artist,
-        sources?: string[]
+        track: Track,
+        sources?: string[],
+        localTrackFile?: TFile | undefined
     ): void {
-        if (this.dataHelpers.isTrack(entity)) {
-            this.addTrackFields(fm, entity, sources);
-        } else if (this.dataHelpers.isAlbum(entity)) {
-            this.addAlbumFields(fm, entity);
-        }
-    }
-
-    private addTrackFields(fm: MusicFrontmatter, track: Track, sources?: string[]): void {
         // Album (only if not a single)
         if (!this.dataHelpers.isSingle(track.album)) {
-            const albumFile = this.fileManager.getAlbumUriToFile().get(track.album.uri);
+            const albumFile = this.fileManager.albumUriToFile.get(track.album.uri);
             fm.album = albumFile
                 ? this.generateMarkdownLink(
                     this.settings.music_catalog_base_path
@@ -124,6 +120,31 @@ export class FrontmatterManager {
         if (sources) {
             fm.spotify_playlists = sources;
         }
+
+        // Add local file path if found
+        if (localTrackFile) {
+            const absolutePathLength = this.settings.local_music_files_path.split("/").length - 1;
+            const relativePath = localTrackFile.path
+                .split("/")
+                .splice(absolutePathLength)
+                .join("/");
+            const localFileLink = `[[${relativePath}]]`
+
+            fm.music_sources = {
+                local: localFileLink,
+                ...fm.music_sources
+            };
+
+            // Check for Cover.jpg in the same folder
+            if (!fm.cover) {
+                const coverPath = `${localTrackFile.parent!.path}/Cover.jpg`;
+                const coverFile = this.app.vault.getAbstractFileByPath(coverPath);
+
+                if (coverFile) {
+                    fm.cover = `[[${coverPath}]]`;
+                }
+            }
+        }
     }
 
     private addAlbumFields(fm: MusicFrontmatter, album: Album): void {
@@ -133,7 +154,7 @@ export class FrontmatterManager {
 
     private getArtistLinks(artists: any[]): string[] {
         return artists.map(artist => {
-            const artistFile = this.fileManager.getArtistUriToFile().get(artist.uri);
+            const artistFile = this.fileManager.artistUriToFile.get(artist.uri);
             return artistFile
                 ? this.generateMarkdownLink(
                     this.settings.music_catalog_base_path

@@ -13,6 +13,7 @@
 	"author": "",
 	"license": "MIT",
 	"devDependencies": {
+		"@types/jsmediatags": "^3.9.6",
 		"@types/node": "^16.11.6",
 		"@typescript-eslint/eslint-plugin": "5.29.0",
 		"@typescript-eslint/parser": "5.29.0",
@@ -24,6 +25,7 @@
 	"dependencies": {
 		"@spotify/web-api-ts-sdk": "^1.2.0",
 		"buffer": "^6.0.3",
+		"jsmediatags": "^3.9.7",
 		"typescript": "^5.3.3"
 	}
 }

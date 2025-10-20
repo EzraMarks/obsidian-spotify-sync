@@ -22,7 +22,7 @@ export class SpotifyApiClient {
     // ARTISTS
     async getRecentFollowedArtists(): Promise<Artist[]> {
         const response = await this.spotifyApi.currentUser.followedArtists(undefined, this.RECENT_SYNC_LIMIT);
-        return response.artists.items.filter(artist => !this.fileManager.getArtistUriToFile().has(artist.uri));
+        return response.artists.items.filter(artist => !this.fileManager.artistUriToFile.has(artist.uri));
     }
 
     async getAllFollowedArtists(): Promise<Artist[]> {
@@ -64,7 +64,7 @@ export class SpotifyApiClient {
 
     private async getRecentSavedAlbums(): Promise<SavedAlbum[]> {
         const response = await this.spotifyApi.currentUser.albums.savedAlbums(this.RECENT_SYNC_LIMIT, 0);
-        return response.items.filter(item => !this.fileManager.getAlbumUriToFile().has(item.album.uri));
+        return response.items.filter(item => !this.fileManager.albumUriToFile.has(item.album.uri));
     }
 
     private async getAllSavedAlbums(): Promise<SavedAlbum[]> {
@@ -102,7 +102,7 @@ export class SpotifyApiClient {
 
     private async getRecentLikedSongs(): Promise<SavedTrack[]> {
         const response = await this.spotifyApi.currentUser.tracks.savedTracks(this.RECENT_SYNC_LIMIT, 0);
-        return response.items.filter(item => !this.fileManager.getTrackUriToFile().has(item.track.uri));
+        return response.items.filter(item => !this.fileManager.trackUriToFile.has(item.track.uri));
     }
 
     private async getAllLikedSongs(): Promise<SavedTrack[]> {
@@ -115,7 +115,7 @@ export class SpotifyApiClient {
         const response = await this.spotifyApi.playlists.getPlaylistItems(
             playlistId, 'US', undefined, this.RECENT_SYNC_LIMIT, 0
         );
-        return response.items.filter(item => !this.fileManager.getTrackUriToFile().has(item.track.uri));
+        return response.items.filter(item => !this.fileManager.trackUriToFile.has(item.track.uri));
     }
 
     private async getAllPlaylistedTracks(playlistId: string): Promise<PlaylistedTrack[]> {

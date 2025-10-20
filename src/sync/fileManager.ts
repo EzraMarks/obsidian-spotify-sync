@@ -1,35 +1,42 @@
 import { App, TFile, TFolder, normalizePath } from 'obsidian';
+import { LocalTrackManager } from './localTrackManager';
+import { ObsidianSpotifySettings } from 'src/settings';
 
 export class FileManager {
-    private trackUriToFile = new Map<string, TFile>();
-    private albumUriToFile = new Map<string, TFile>();
-    private artistUriToFile = new Map<string, TFile>();
+    trackUriToFile = new Map<string, TFile>();
+    albumUriToFile = new Map<string, TFile>();
+    artistUriToFile = new Map<string, TFile>();
+    localTrackManager: LocalTrackManager;
 
     constructor(
         private app: App,
-        private artistsPath: string,
-        private albumsPath: string,
-        private tracksPath: string
-    ) { }
-
-    getTrackUriToFile(): Map<string, TFile> {
-        return this.trackUriToFile;
+        private settings: ObsidianSpotifySettings,
+    ) {
+        this.localTrackManager = new LocalTrackManager(app, this.localMusicFilesPath);
     }
 
-    getAlbumUriToFile(): Map<string, TFile> {
-        return this.albumUriToFile;
+    get artistsPath(): string {
+        return `${this.settings.music_catalog_base_path}/${this.settings.artists_path}`;
     }
 
-    getArtistUriToFile(): Map<string, TFile> {
-        return this.artistUriToFile;
+    get albumsPath(): string {
+        return `${this.settings.music_catalog_base_path}/${this.settings.albums_path}`;
+    }
+
+    get tracksPath(): string {
+        return `${this.settings.music_catalog_base_path}/${this.settings.tracks_path}`;
+    }
+
+    get localMusicFilesPath(): string {
+        return `${this.settings.local_music_files_path}`;
     }
 
     async buildUriMappings(): Promise<void> {
         console.log('Building Spotify URI to file mappings...');
 
-        await this.buildMappingForFolder(this.tracksPath, this.trackUriToFile);
-        await this.buildMappingForFolder(this.albumsPath, this.albumUriToFile);
         await this.buildMappingForFolder(this.artistsPath, this.artistUriToFile);
+        await this.buildMappingForFolder(this.albumsPath, this.albumUriToFile);
+        await this.buildMappingForFolder(this.tracksPath, this.trackUriToFile);
 
         console.log(`Built mappings: ${this.trackUriToFile.size} tracks, ${this.albumUriToFile.size} albums, ${this.artistUriToFile.size} artists`);
     }

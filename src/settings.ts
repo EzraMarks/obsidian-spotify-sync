@@ -42,6 +42,11 @@ export interface ObsidianSpotifySettings {
     tracks_path: string;
 
     /**
+     * The base path where local music files are stored.
+     */
+    local_music_files_path: string;
+
+    /**
      * List of Spotify playlist IDs to sync tracks from (in addition to Liked Songs).
      */
     playlist_ids: string[];
@@ -93,6 +98,7 @@ export const DEFAULT_SETTINGS: ObsidianSpotifySettings = {
     artists_path: 'Artists',
     albums_path: 'Albums',
     tracks_path: 'Tracks',
+    local_music_files_path: '',
     playlist_ids: [],
     playlist_names: {},
     auto_sync_on_load: false,
@@ -290,6 +296,17 @@ export class ObsidianSpotifySettingsTab extends PluginSettingTab {
                 }));
 
         new Setting(containerEl)
+            .setName('Local Music Files Path')
+            .setDesc('The base folder where your local music files are stored (for linking to actual audio files)')
+            .addText(text => text
+                .setPlaceholder('e.g., Music/Library')
+                .setValue(this.plugin.settings.local_music_files_path)
+                .onChange(async (value) => {
+                    this.plugin.settings.local_music_files_path = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        new Setting(containerEl)
             .setName('Auto-sync on plugin load')
             .setDesc('Automatically sync recent changes when the plugin loads')
             .addToggle(toggle => toggle
@@ -336,6 +353,7 @@ export class ObsidianSpotifySettingsTab extends PluginSettingTab {
 			<p><strong>Full Artists Path:</strong> <code>${this.plugin.settings.music_catalog_base_path}/${this.plugin.settings.artists_path}</code></p>
 			<p><strong>Full Albums Path:</strong> <code>${this.plugin.settings.music_catalog_base_path}/${this.plugin.settings.albums_path}</code></p>
 			<p><strong>Full Tracks Path:</strong> <code>${this.plugin.settings.music_catalog_base_path}/${this.plugin.settings.tracks_path}</code></p>
+			${this.plugin.settings.local_music_files_path ? `<p><strong>Local Music Files:</strong> <code>${this.plugin.settings.local_music_files_path}</code></p>` : ''}
 		`;
 
         new Setting(containerEl)

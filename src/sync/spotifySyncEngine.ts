@@ -13,10 +13,6 @@ export class SpotifySyncEngine {
     private spotifyApi: SpotifyApi;
     private settings: ObsidianSpotifySettings;
 
-    private readonly ARTISTS_PATH: string;
-    private readonly ALBUMS_PATH: string;
-    private readonly TRACKS_PATH: string;
-
     private apiClient: SpotifyApiClient;
     private frontmatterManager: FrontmatterManager;
     private fileManager: FileManager;
@@ -27,20 +23,14 @@ export class SpotifySyncEngine {
         this.spotifyApi = spotifyApi;
         this.settings = settings;
 
-        this.ARTISTS_PATH = `${settings.music_catalog_base_path}/${settings.artists_path}`;
-        this.ALBUMS_PATH = `${settings.music_catalog_base_path}/${settings.albums_path}`;
-        this.TRACKS_PATH = `${settings.music_catalog_base_path}/${settings.tracks_path}`;
-
         this.dataHelpers = new SpotifyDataHelpers(settings);
-        this.fileManager = new FileManager(app, this.ARTISTS_PATH, this.ALBUMS_PATH, this.TRACKS_PATH);
+        this.fileManager = new FileManager(app, this.settings);
         this.apiClient = new SpotifyApiClient(spotifyApi, settings, this.dataHelpers, this.fileManager);
         this.frontmatterManager = new FrontmatterManager(
             app,
             settings,
             this.dataHelpers,
-            this.fileManager,
-            this.ARTISTS_PATH,
-            this.ALBUMS_PATH
+            this.fileManager
         );
     }
 
@@ -48,26 +38,21 @@ export class SpotifySyncEngine {
         try {
             options.silent || new Notice(`Starting ${options.isFullSync ? 'full' : 'recent'} Spotify sync...`);
 
-            await this.fileManager.ensureDirectoryExists(this.ARTISTS_PATH);
-            await this.fileManager.ensureDirectoryExists(this.ALBUMS_PATH);
-            await this.fileManager.ensureDirectoryExists(this.TRACKS_PATH);
+            await this.fileManager.ensureDirectoryExists(this.fileManager.artistsPath);
+            await this.fileManager.ensureDirectoryExists(this.fileManager.albumsPath);
+            await this.fileManager.ensureDirectoryExists(this.fileManager.tracksPath);
             await this.fileManager.buildUriMappings();
 
             // Create notes in dependency order: artists <- albums <- tracks
             options.isFullSync
                 ? await this.upsertAllArtists()
                 : await this.upsertRecentArtists();
-            await this.fileManager.buildMappingForFolder(this.ARTISTS_PATH, this.fileManager.getArtistUriToFile());
-
             options.isFullSync
                 ? await this.upsertAllAlbums()
                 : await this.upsertRecentAlbums();
-            await this.fileManager.buildMappingForFolder(this.ALBUMS_PATH, this.fileManager.getAlbumUriToFile());
-
             options.isFullSync
                 ? await this.upsertAllTracks()
                 : await this.upsertRecentTracks();
-            await this.fileManager.buildMappingForFolder(this.TRACKS_PATH, this.fileManager.getTrackUriToFile());
 
             options.silent || new Notice(`${options.isFullSync ? 'Full' : 'Recent'} Spotify sync completed successfully!`);
         } catch (error) {
@@ -90,7 +75,7 @@ export class SpotifySyncEngine {
         const followedArtists = await this.apiClient.getAllFollowedArtists();
 
         const followedArtistUris = new Set(followedArtists.map(artist => artist.uri));
-        const unsavedArtistIds = [...this.fileManager.getArtistUriToFile().entries()]
+        const unsavedArtistIds = [...this.fileManager.artistUriToFile.entries()]
             .filter(([uri]) => !followedArtistUris.has(uri))
             .map(([uri, file]) => this.fileManager.extractSpotifyIdFromFile(file))
             .filter((id): id is string => id != null);
@@ -123,7 +108,7 @@ export class SpotifySyncEngine {
         const savedAlbums = await this.apiClient.getSavedAlbums({ isFullSync: true });
 
         const savedAlbumUris = new Set(savedAlbums.map(item => item.album.uri));
-        const unsavedAlbumIds = [...this.fileManager.getAlbumUriToFile().entries()]
+        const unsavedAlbumIds = [...this.fileManager.albumUriToFile.entries()]
             .filter(([uri]) => !savedAlbumUris.has(uri))
             .map(([uri, file]) => this.fileManager.extractSpotifyIdFromFile(file))
             .filter((id): id is string => id != null);
@@ -155,7 +140,7 @@ export class SpotifySyncEngine {
         const savedTracks = await this.apiClient.getSavedTracks({ isFullSync: true });
 
         const savedTrackUris = new Set(savedTracks.map(item => item.track.uri));
-        const unsavedTrackIds = [...this.fileManager.getTrackUriToFile().entries()]
+        const unsavedTrackIds = [...this.fileManager.trackUriToFile.entries()]
             .filter(([uri]) => !savedTrackUris.has(uri))
             .map(([uri, file]) => this.fileManager.extractSpotifyIdFromFile(file))
             .filter((id): id is string => id != null);
@@ -182,11 +167,22 @@ export class SpotifySyncEngine {
         const file = await this.fileManager.getOrCreateNote(
             track.uri,
             fileName,
-            this.TRACKS_PATH,
-            this.fileManager.getTrackUriToFile()
+            this.fileManager.tracksPath,
+            this.fileManager.trackUriToFile
         );
         if (file) {
-            await this.frontmatterManager.updateItemFrontmatter(file, track, isInSpotifyLibrary, addedAt, sources);
+            const localTrackFile = await this.fileManager.localTrackManager.findTrackFile(track.uri);
+
+            await this.frontmatterManager.updateItemFrontmatter(
+                file,
+                track,
+                isInSpotifyLibrary,
+                addedAt,
+                sources,
+                localTrackFile
+            );
+
+            this.fileManager.trackUriToFile.set(track.uri, file);
         }
     }
 
@@ -200,11 +196,12 @@ export class SpotifySyncEngine {
         const file = await this.fileManager.getOrCreateNote(
             album.uri,
             fileName,
-            this.ALBUMS_PATH,
-            this.fileManager.getAlbumUriToFile()
+            this.fileManager.albumsPath,
+            this.fileManager.albumUriToFile
         );
         if (file) {
             await this.frontmatterManager.updateItemFrontmatter(file, album, isInSpotifyLibrary, addedAt);
+            this.fileManager.albumUriToFile.set(album.uri, file);
         }
     }
 
@@ -216,11 +213,12 @@ export class SpotifySyncEngine {
         const file = await this.fileManager.getOrCreateNote(
             artist.uri,
             fileName,
-            this.ARTISTS_PATH,
-            this.fileManager.getArtistUriToFile()
+            this.fileManager.artistsPath,
+            this.fileManager.artistUriToFile
         );
         if (file) {
             await this.frontmatterManager.updateItemFrontmatter(file, artist, isInSpotifyLibrary);
+            this.fileManager.artistUriToFile.set(artist.uri, file);
         }
     }
 }
