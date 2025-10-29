@@ -1,5 +1,6 @@
 import * as jsmediatags from 'jsmediatags';
 import { App, normalizePath, TFile } from 'obsidian';
+import { ObsidianSpotifySettings } from 'src/settings';
 
 
 interface TrackMetadata {
@@ -15,8 +16,12 @@ export class LocalTrackManager {
 
     constructor(
         private app: App,
-        private musicFolderPath: string
+        private settings: ObsidianSpotifySettings
     ) { }
+
+    private get musicFolderPath() {
+        return this.settings.local_music_files_path;
+    }
 
     async findTrackFile(spotifyUri: string): Promise<TFile | undefined> {
         const lookupKey = this.parseSpotifyLocalUriToLookupKey(spotifyUri);

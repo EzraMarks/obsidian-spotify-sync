@@ -1,9 +1,10 @@
-import { Platform, App, Editor, MarkdownView, Modal, Notice, Plugin, PluginManifest, PluginSettingTab, Setting, requestUrl, SettingTab } from 'obsidian';
-import { SpotifyApi, AccessToken } from '@spotify/web-api-ts-sdk';
-import { SpotifySyncEngine } from './sync/spotifySyncEngine';
+import { Platform, Notice, Plugin, PluginManifest, requestUrl } from 'obsidian';
+import { SpotifyApi } from '@spotify/web-api-ts-sdk';
+import { SyncEngine } from './sync/SyncEngine';
 import { ObsidianSpotifySettings, DEFAULT_SETTINGS, ObsidianSpotifySettingsTab } from './settings';
 import { SpotifyAuth } from './auth/spotifyAuth';
 import { TokenManager } from './auth/tokenManager';
+import { SpotifyLibrarySource } from './sync/music-sources/spotify/SpotifyLibrarySource';
 
 /**
  * Main Obsidian Spotify plugin class.
@@ -193,8 +194,9 @@ export default class ObsidianSpotify extends Plugin {
 		}
 
 		try {
-			const syncManager = new SpotifySyncEngine(this.app, this.spotifyApi, this.settings);
-			await syncManager.sync({ isFullSync: true });
+			const musicLibrarySource = new SpotifyLibrarySource(this.spotifyApi, this.settings);
+			const syncManager = new SyncEngine(this.app, this.settings, musicLibrarySource);
+			await syncManager.fullSync();
 		} catch (error) {
 			console.error('Sync failed:', error);
 			new Notice('Sync failed. Check console for details.');
@@ -208,8 +210,9 @@ export default class ObsidianSpotify extends Plugin {
 		}
 
 		try {
-			const syncManager = new SpotifySyncEngine(this.app, this.spotifyApi, this.settings);
-			await syncManager.sync({ isFullSync: false, silent });
+			const musicLibrarySource = new SpotifyLibrarySource(this.spotifyApi, this.settings);
+			const syncManager = new SyncEngine(this.app, this.settings, musicLibrarySource);
+			await syncManager.incrementalSync(silent);
 		} catch (error) {
 			console.error('Sync failed:', error);
 			new Notice('Sync failed. Check console for details.');
