@@ -2,7 +2,7 @@ import { MusicLibraryQueryOptions, MusicLibrarySource } from "../MusicLibrarySou
 import { SpotifyApi } from '@spotify/web-api-ts-sdk';
 import type * as Spotify from '@spotify/web-api-ts-sdk';
 import { SpotifyUtils } from './SpotifyUtils';
-import { Album, Artist, Track, SimplifiedArtist, SimplifiedTrack, SimplifiedAlbum } from "src/sync/types";
+import { Album, Artist, Track, SimplifiedArtist, SimplifiedTrack, SimplifiedAlbum, MusicSources } from "src/sync/types";
 import { moment } from 'obsidian';
 import { ObsidianSpotifySettings } from "src/settings";
 
@@ -14,13 +14,14 @@ export class SpotifyLibrarySource extends MusicLibrarySource {
     private readonly TRACKS_BATCH_SIZE = 50;
     private readonly RECENT_SYNC_LIMIT: Spotify.MaxInt<50> = 20;
 
-    private readonly utils = new SpotifyUtils(this.settings);
+    private readonly utils: SpotifyUtils;
 
     constructor(
         private spotifyApi: SpotifyApi,
         private settings: ObsidianSpotifySettings
     ) {
         super();
+        this.utils = new SpotifyUtils(this.settings);
     }
 
     override async getSavedArtists(options: MusicLibraryQueryOptions): Promise<Artist[]> {
@@ -49,8 +50,7 @@ export class SpotifyLibrarySource extends MusicLibrarySource {
             addedAt: undefined,
             sources: {
                 spotify: item.href
-            },
-            inLibrary: true
+            }
         }));
     }
 
@@ -132,8 +132,8 @@ export class SpotifyLibrarySource extends MusicLibrarySource {
             title: item.name,
             image: this.utils.getBestImageUrl(item.images),
             ids: this.utils.getSpotifyIds(item),
-            artists: item.artists.map(this.toSimplifiedArtist),
-            tracks: item.tracks.items.map(this.toSimplifiedTrack),
+            artists: item.artists.map(artist => this.toSimplifiedArtist(artist)),
+            tracks: item.tracks.items.map(track => this.toSimplifiedTrack(track)),
             addedAt,
             sources: {
                 spotify: item.href
@@ -153,7 +153,7 @@ export class SpotifyLibrarySource extends MusicLibrarySource {
                 ? null // album is null for tracks that are singles
                 : {
                     title: spotifyAlbum.name,
-                    artists: spotifyAlbum.artists.map(this.toSimplifiedArtist),
+                    artists: spotifyAlbum.artists.map(artist => this.toSimplifiedArtist(artist)),
                     ids: this.utils.getSpotifyIds(spotifyAlbum)
                 };
 

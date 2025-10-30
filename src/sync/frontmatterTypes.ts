@@ -6,7 +6,6 @@ export class MusicFrontmatter {
     artists?: string[] = undefined;
     cover?: string = undefined;
     tracks?: string[] = undefined;
-    in_library?: boolean = undefined;
     music_ids: MusicIdsFrontmatter = new MusicIdsFrontmatter();
     music_sources: MusicSourcesFrontmatter = new MusicSourcesFrontmatter();
     aliases?: string[] = undefined;
@@ -24,4 +23,5 @@ export class MusicSourcesFrontmatter {
     spotify?: string = undefined;
     local?: string = undefined;
     online?: string[] = undefined;
+    in_library?: boolean = undefined;
 }

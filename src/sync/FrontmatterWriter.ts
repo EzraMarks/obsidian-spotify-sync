@@ -33,15 +33,16 @@ export class FrontmatterWriter {
     }
 
     async updateAlbumFrontmatter(album: MusicFile<Album>): Promise<void> {
-        await this.app.fileManager.processFrontMatter(album.file, async (fmOriginal) => {
+        const artistLinks = await Promise.all(
+            album.artists.map(artist => this.generateArtistLink(artist))
+        );
+
+        await this.app.fileManager.processFrontMatter(album.file, (fmOriginal) => {
             const fm = Object.assign(new MusicFrontmatter(), fmOriginal);
 
             this.updateCommonFrontmatter(fm, album);
 
-            fm.artists = await Promise.all(
-                album.artists.map(artist => this.generateArtistLink(artist))
-            );
-
+            fm.artists = artistLinks;
             fm.tracks = fm.tracks ?? album.tracks?.map(track => track.title);
 
             this.finalizeFrontmatter(
@@ -54,16 +55,18 @@ export class FrontmatterWriter {
     }
 
     async updateTrackFrontmatter(track: MusicFile<Track>): Promise<void> {
-        await this.app.fileManager.processFrontMatter(track.file, async (fmOriginal) => {
+        const albumLink = track.album && await this.generateAlbumLink(track.album);
+        const artistLinks = await Promise.all(
+            track.artists.map(artist => this.generateArtistLink(artist))
+        );
+
+        await this.app.fileManager.processFrontMatter(track.file, (fmOriginal) => {
             const fm = Object.assign(new MusicFrontmatter(), fmOriginal);
 
             this.updateCommonFrontmatter(fm, track);
 
-            fm.album = track.album && await this.generateAlbumLink(track.album);
-
-            fm.artists = await Promise.all(
-                track.artists.map(artist => this.generateArtistLink(artist))
-            );
+            fm.album = albumLink;
+            fm.artists = artistLinks;
 
             this.finalizeFrontmatter(
                 fmOriginal,
@@ -80,7 +83,6 @@ export class FrontmatterWriter {
     ): void {
         fm.title = fm.title ?? entity.title;
         fm.cover = fm.cover ?? entity.image;
-        fm.in_library = fm.in_library ?? entity.inLibrary;
         fm.aliases = fm.aliases ?? [entity.title];
 
         fm.music_ids = {

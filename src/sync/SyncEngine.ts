@@ -5,6 +5,7 @@ import { MusicFile, MusicEntity, Artist, Album, Track } from './types';
 import { MusicLibrarySource } from './music-sources/MusicLibrarySource';
 import { MusicIdIndex } from './MusicIdIndex';
 import { MusicMetadataEnricher } from './MusicMetadataEnricher';
+import { MusicFrontmatter } from './frontmatterTypes';
 
 export class SyncEngine {
     private readonly fileManager: FileManager;
@@ -139,8 +140,7 @@ export class SyncEngine {
                 const enriched = enrichedEntities[index];
 
                 // Only update if metadata changed
-                // TODO: Consider better equality check
-                if (JSON.stringify(original) === JSON.stringify(enriched)) {
+                if (this.entitiesAreEqual(original, enriched)) {
                     return file;
                 }
 
@@ -201,9 +201,32 @@ export class SyncEngine {
         const enrichedEntities = await enrichEntities(newEntities);
 
         await Promise.all(enrichedEntities.map(entity => {
-            entity.inLibrary = true;
+            entity.sources.in_library = true;
             createFile(entity);
         }));
+    }
+
+    /**
+     * Compares two music entities for equality, excluding the 'file' property
+     * that causes circular references
+     */
+    private entitiesAreEqual<T extends MusicEntity>(entity1: T, entity2: T): boolean {
+        const clean = (obj: any): any => {
+            if (!obj || typeof obj !== 'object') return obj;
+            if (Array.isArray(obj)) return obj.map(clean);
+            if (obj._isAMomentObject) return obj.toISOString();
+
+            const { file, ...rest } = obj;
+            return Object.fromEntries(
+                Object.entries(rest).map(([k, v]) => [k, clean(v)])
+            );
+        };
+
+        try {
+            return JSON.stringify(clean(entity1)) === JSON.stringify(clean(entity2));
+        } catch {
+            return false;
+        }
     }
 
     /**
@@ -217,11 +240,11 @@ export class SyncEngine {
 
         Promise.all(
             files.map(file => {
-                file.inLibrary = savedEntitiesIndex.has(file.ids);
+                file.sources.in_library = savedEntitiesIndex.has(file.ids);
                 this.app.fileManager.processFrontMatter(
                     file.file,
-                    fm => {
-                        fm.in_library = file.inLibrary
+                    (fm: MusicFrontmatter) => {
+                        fm.music_sources.in_library = file.sources.in_library
                     }
                 )
             })

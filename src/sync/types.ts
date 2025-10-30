@@ -22,7 +22,6 @@ export interface MusicEntity {
     title: string;
     ids: MusicIds;
     sources: MusicSources;
-    inLibrary?: boolean; // whether this entity is saved in the streaming library source
     image?: string;
     addedAt?: moment.Moment;
 }
