@@ -62,7 +62,7 @@ export class SyncEngine {
 
     async incrementalSync(silent?: boolean): Promise<void> {
         try {
-            new Notice('Starting incremental sync...');
+            !silent && new Notice('Starting incremental sync...');
 
             await this.fileManager.ensureDirectoryExists(this.fileManager.artistsPath);
             await this.fileManager.ensureDirectoryExists(this.fileManager.albumsPath);
@@ -80,12 +80,10 @@ export class SyncEngine {
             await this.ingestNewAlbums(savedAlbums);
             await this.ingestNewTracks(savedTracks);
 
-            new Notice('Incremental sync completed successfully!');
+            !silent && new Notice('Incremental sync completed successfully!');
         } catch (error) {
-            if (!silent) {
-                console.error('Incremental sync failed:', error);
-                new Notice('Incremental sync failed. Check console for details.');
-            }
+            console.error('Incremental sync failed:', error);
+            new Notice('Incremental sync failed. Check console for details.');
         }
     }
 
