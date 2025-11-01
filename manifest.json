@@ -1,8 +1,8 @@
 {
-	"id": "spotify-sync",
-	"name": "Spotify Sync",
+	"id": "music-library",
+	"name": "Music Library",
 	"minAppVersion": "0.15.0",
-	"description": "Spotify sync plugin.",
+	"description": "Music library plugin.",
 	"author": "Ezra Marks",
 	"authorUrl": "https://github.com/EzraMarks",
 	"isDesktopOnly": false,
