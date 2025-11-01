@@ -55,7 +55,7 @@ export class FrontmatterReader {
     private extractFrontmatter(file: TFile): MusicFrontmatter | undefined {
         const metadata = this.app.metadataCache.getFileCache(file);
         if (!metadata?.frontmatter) {
-            return undefined;
+            throw new Error("Metadata cache not yet initialized.");
         }
 
         return Object.assign(new MusicFrontmatter(), metadata.frontmatter);

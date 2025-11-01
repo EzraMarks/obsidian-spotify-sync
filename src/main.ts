@@ -61,7 +61,6 @@ export default class ObsidianSpotify extends Plugin {
 
 	/**
 	 * Debounced recent sync to prevent double execution.
-	 * Waits for caches to be ready before syncing.
 	 */
 	private async debouncedSyncRecent(silent?: boolean): Promise<void> {
 		const now = Date.now();
@@ -72,7 +71,6 @@ export default class ObsidianSpotify extends Plugin {
 
 		this.lastSyncTime = now;
 
-		// Wait for indexes/caches to be ready before syncing
 		this.app.workspace.onLayoutReady(async () => {
 			await this.syncRecent(silent);
 		});
