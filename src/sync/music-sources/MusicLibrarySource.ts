@@ -1,4 +1,4 @@
-import { Album, Artist, MusicSources, Track } from "../types";
+import { Album, Artist, MusicEntity, MusicIds, MusicSources, Track } from "../types";
 
 export interface MusicLibraryQueryOptions {
     recentOnly?: boolean
@@ -11,5 +11,11 @@ export abstract class MusicLibrarySource {
 
     abstract getSavedTracks(options: MusicLibraryQueryOptions): Promise<Track[]>;
 
+    abstract getArtistsById(ids: string[]): Promise<Artist[]>;
+
     abstract getAlbumsById(ids: string[]): Promise<Album[]>;
+
+    abstract getTracksById(ids: string[]): Promise<Track[]>;
+
+    abstract getPrimaryId(ids: MusicIds): string | undefined;
 }

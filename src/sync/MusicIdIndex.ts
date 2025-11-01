@@ -37,7 +37,7 @@ export class MusicIdIndex<T> {
     /**
      * Alternative constructor for items that already have ids property
      */
-    static fromItems<T extends MusicFile<MusicEntity>>(items: T[]): MusicIdIndex<T> {
+    static fromItems<T extends MusicEntity>(items: T[]): MusicIdIndex<T> {
         return new MusicIdIndex(items, item => item.ids);
     }
 

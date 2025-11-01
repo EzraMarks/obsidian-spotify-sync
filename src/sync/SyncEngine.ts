@@ -244,7 +244,10 @@ export class SyncEngine {
                 this.app.fileManager.processFrontMatter(
                     file.file,
                     (fm: MusicFrontmatter) => {
-                        fm.music_sources.in_library = file.sources.in_library
+                        fm.music_sources = {
+                            ...fm.music_sources,
+                            in_library: file.sources.in_library
+                        }
                     }
                 )
             })

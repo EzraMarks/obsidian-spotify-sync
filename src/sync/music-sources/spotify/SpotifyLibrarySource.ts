@@ -2,7 +2,7 @@ import { MusicLibraryQueryOptions, MusicLibrarySource } from "../MusicLibrarySou
 import { SpotifyApi } from '@spotify/web-api-ts-sdk';
 import type * as Spotify from '@spotify/web-api-ts-sdk';
 import { SpotifyUtils } from './SpotifyUtils';
-import { Album, Artist, Track, SimplifiedArtist, SimplifiedTrack, SimplifiedAlbum, MusicSources } from "src/sync/types";
+import { Album, Artist, Track, SimplifiedArtist, SimplifiedTrack, SimplifiedAlbum, MusicSources, MusicIds } from "src/sync/types";
 import { moment } from 'obsidian';
 import { ObsidianSpotifySettings } from "src/settings";
 
@@ -43,15 +43,7 @@ export class SpotifyLibrarySource extends MusicLibrarySource {
             if (!after) break;
         }
 
-        return spotifyArtists.map(item => ({
-            title: item.name,
-            image: this.utils.getBestImageUrl(item.images),
-            ids: this.utils.getSpotifyIds(item),
-            addedAt: undefined,
-            sources: {
-                spotify: item.href
-            }
-        }));
+        return spotifyArtists.map(item => this.toArtist(item, undefined));
     }
 
     override async getSavedAlbums(options: MusicLibraryQueryOptions): Promise<Album[]> {
@@ -117,6 +109,18 @@ export class SpotifyLibrarySource extends MusicLibrarySource {
         );
     }
 
+    override async getArtistsById(spotifyIds: string[]): Promise<Artist[]> {
+        const artists = await this.batchSpotifyApi(
+            spotifyIds,
+            this.ARTISTS_BATCH_SIZE,
+            (ids) => this.spotifyApi.artists.get(ids)
+        );
+
+        return artists
+            .filter(item => item != null)
+            .map(item => this.toArtist(item, undefined));
+    }
+
     override async getAlbumsById(spotifyIds: string[]): Promise<Album[]> {
         const albums = await this.batchSpotifyApi(
             spotifyIds,
@@ -124,7 +128,37 @@ export class SpotifyLibrarySource extends MusicLibrarySource {
             (ids) => this.spotifyApi.albums.get(ids)
         );
 
-        return albums.map(item => this.toAlbum(item, undefined));
+        return albums
+            .filter(item => item != null)
+            .map(item => this.toAlbum(item, undefined));
+    }
+
+    override async getTracksById(spotifyIds: string[]): Promise<Track[]> {
+        const tracks = await this.batchSpotifyApi(
+            spotifyIds,
+            this.TRACKS_BATCH_SIZE,
+            (ids) => this.spotifyApi.tracks.get(ids)
+        );
+
+        return tracks
+            .filter(item => item != null)
+            .map(item => this.toTrack(item, undefined));
+    }
+
+    override getPrimaryId(ids: MusicIds): string | undefined {
+        return ids.spotify_id;
+    }
+
+    private toArtist(item: Spotify.Artist, addedAt: moment.Moment | undefined): Artist {
+        return {
+            title: item.name,
+            image: this.utils.getBestImageUrl(item.images),
+            ids: this.utils.getSpotifyIds(item),
+            addedAt,
+            sources: {
+                spotify: `https://open.spotify.com/artist/${item.id}`
+            }
+        };
     }
 
     private toAlbum(item: Spotify.Album, addedAt: moment.Moment | undefined): Album {
@@ -136,7 +170,7 @@ export class SpotifyLibrarySource extends MusicLibrarySource {
             tracks: item.tracks.items.map(track => this.toSimplifiedTrack(track)),
             addedAt,
             sources: {
-                spotify: item.href
+                spotify: `https://open.spotify.com/album/${item.id}`
             }
         }
     }
@@ -165,7 +199,7 @@ export class SpotifyLibrarySource extends MusicLibrarySource {
             album,
             addedAt,
             sources: {
-                spotify: item.href
+                spotify: `https://open.spotify.com/track/${item.id}`
             }
         };
     }
