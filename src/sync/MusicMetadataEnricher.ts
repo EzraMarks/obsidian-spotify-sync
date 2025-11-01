@@ -23,7 +23,7 @@ export class MusicMetadataEnricher {
     async enrichArtists(artists: Artist[]): Promise<Artist[]> {
         // TODO: Add additional enrichments (e.g. MusicBrainz)
         // and only query for enrichments when they are not already present
-        return this.enrichItemsFromMusicLibrarySource(
+        return this.enrichEntitiesWithMusicLibrarySource(
             artists,
             (ids) => this.musicLibrarySource.getArtistsById(ids)
         );
@@ -35,7 +35,7 @@ export class MusicMetadataEnricher {
     async enrichAlbums(albums: Album[]): Promise<Album[]> {
         // TODO: Add additional enrichments (e.g. MusicBrainz)
         // and only query for enrichments when they are not already present
-        return this.enrichItemsFromMusicLibrarySource(
+        return this.enrichEntitiesWithMusicLibrarySource(
             albums,
             (ids) => this.musicLibrarySource.getAlbumsById(ids)
         );
@@ -44,28 +44,28 @@ export class MusicMetadataEnricher {
     async enrichTracks(tracks: Track[]): Promise<Track[]> {
         // TODO: Add additional enrichments (e.g. MusicBrainz)
         // and only query for enrichments when they are not already present
-        return this.enrichItemsFromMusicLibrarySource(
+        return this.enrichEntitiesWithMusicLibrarySource(
             tracks,
             (ids) => this.musicLibrarySource.getTracksById(ids)
         );
     }
 
-    private async enrichItemsFromMusicLibrarySource<T extends MusicEntity>(
-        items: T[],
+    private async enrichEntitiesWithMusicLibrarySource<T extends MusicEntity>(
+        entities: T[],
         fetchEnrichedData: (ids: string[]) => Promise<T[]>
     ): Promise<T[]> {
-        const ids = items
+        const ids = entities
             .map(item => this.musicLibrarySource.getPrimaryId(item.ids))
             .filter(id => id != null);
 
         if (ids.length === 0) {
-            return items;
+            return entities;
         }
 
         const enrichedData = await fetchEnrichedData(ids);
         const enrichedDataIndex = MusicIdIndex.fromItems(enrichedData);
 
-        return items.map(item => {
+        return entities.map(item => {
             const enriched = enrichedDataIndex.get(item.ids);
             return enriched ? { ...item, ...enriched } : item;
         });
