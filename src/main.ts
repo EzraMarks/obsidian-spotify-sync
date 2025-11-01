@@ -71,9 +71,7 @@ export default class ObsidianSpotify extends Plugin {
 
 		this.lastSyncTime = now;
 
-		this.app.workspace.onLayoutReady(async () => {
-			await this.syncRecent(silent);
-		});
+		await this.syncRecent(silent);
 	}
 
 	/**
