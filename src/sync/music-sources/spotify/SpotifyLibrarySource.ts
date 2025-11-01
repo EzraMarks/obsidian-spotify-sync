@@ -160,7 +160,7 @@ export class SpotifyLibrarySource extends MusicLibrarySource {
         return {
             title: item.name,
             image: this.utils.getBestImageUrl(item.album.images),
-            ids: this.utils.getSpotifyIds(item.album),
+            ids: this.utils.getSpotifyIds(item),
             artists,
             album,
             addedAt,
