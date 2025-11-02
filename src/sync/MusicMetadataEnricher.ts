@@ -4,6 +4,7 @@ import { Album, Artist, MusicEntity, Track } from "./types";
 import { App } from "obsidian";
 import { LocalTrackManager } from "./LocalTrackManager";
 import { MusicIdIndex } from "./MusicIdIndex";
+import { removeNullish } from "src/utils";
 
 
 export class MusicMetadataEnricher {
@@ -67,7 +68,7 @@ export class MusicMetadataEnricher {
 
         return entities.map(item => {
             const enriched = enrichedDataIndex.get(item.ids);
-            return enriched ? { ...item, ...enriched } : item;
+            return enriched ? { ...item, ...removeNullish(enriched) } : item;
         });
     }
 }

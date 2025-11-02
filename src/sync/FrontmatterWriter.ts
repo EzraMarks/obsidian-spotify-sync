@@ -3,6 +3,7 @@ import { ObsidianSpotifySettings } from '../settings';
 import { MusicFrontmatter } from './frontmatterTypes';
 import { Track, Album, Artist, SimplifiedArtist, SimplifiedAlbum } from "./types";
 import { MusicFile } from './types';
+import { removeNullish } from 'src/utils';
 
 export class FrontmatterWriter {
     // User-specified frontmatter that is appended when creating new files
@@ -87,12 +88,12 @@ export class FrontmatterWriter {
 
         fm.music_ids = {
             ...fm.music_ids,
-            ...entity.ids,
+            ...removeNullish(entity.ids),
         };
 
         fm.music_sources = {
             ...fm.music_sources,
-            ...entity.sources
+            ...removeNullish(entity.sources)
         };
     }
 
@@ -104,9 +105,9 @@ export class FrontmatterWriter {
     ): void {
         // Set created date
         const newCreatedDate = addedAt
-            ? moment(addedAt).format("YYYY-MM-DD")
+            ? addedAt.format("YYYY-MM-DD")
             : moment().format("YYYY-MM-DD");
-        if (!fm.created || newCreatedDate < fm.created) {
+        if (!fm.created || moment(newCreatedDate) < moment(fm.created)) {
             fm.created = newCreatedDate;
         }
 

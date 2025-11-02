@@ -6,6 +6,7 @@ import { MusicLibrarySource } from './music-sources/MusicLibrarySource';
 import { MusicIdIndex } from './MusicIdIndex';
 import { MusicMetadataEnricher } from './MusicMetadataEnricher';
 import { MusicFrontmatter } from './frontmatterTypes';
+import { removeNullish } from 'src/utils';
 
 export class SyncEngine {
     private readonly fileManager: FileManager;
@@ -142,7 +143,7 @@ export class SyncEngine {
                     return file;
                 }
 
-                const enrichedFile: MusicFile<T> = { ...file, ...enriched };
+                const enrichedFile: MusicFile<T> = { ...file, ...removeNullish(enriched) };
                 await updateFile(enrichedFile);
                 return enrichedFile;
             })
